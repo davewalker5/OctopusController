@@ -6,7 +6,9 @@
 
 # Octopus Controller
 
-
+<p>
+<img src="https://github.com/davewalker5/OctopusController/blob/main/images/behaviour-showcase.gif" alt="Behaviour Showcase" width="600">
+</p>
 
 *A simulation of octopus-inspired distributed arm control, local sensing, obstacle avoidance and grasping.*
 
