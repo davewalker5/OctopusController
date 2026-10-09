@@ -1,5 +1,6 @@
 """Application input and fixed-step timing for the eight-arm experiment."""
 
+import argparse
 from dataclasses import replace
 from math import pi
 from pathlib import Path
@@ -8,19 +9,21 @@ import pygame
 
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
+from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario
 from octopus_controller.sensing import Environment, ObjectKind
 from octopus_controller.view import HEADER_ICON_SIZE, WINDOW_SIZE, WORLD, draw_scene
 
 SIMULATION_STEP = 1 / 120
 MAXIMUM_FRAME_TIME = 0.1
-BODY_CENTRE = (400.0, 460.0)
+BODY_CENTRE = DEFAULT_BODY
 
 
 class Application:
     """Own UI state and translate user input into simulation commands."""
 
-    def __init__(self) -> None:
-        """Create the initial experiment without opening a display."""
+    def __init__(self, scenario: Scenario | None = None) -> None:
+        """Create a default experiment or a paused scenario without opening a display."""
+        self.scenario = scenario
         self.central = CentralController(BODY_CENTRE)
         self.selected_index = 0
         self.paused = False
@@ -30,6 +33,24 @@ class Application:
         self.placement: ObjectKind | None = None
         self.selected_object: int | None = None
         self.dragging_object = False
+        self.central.refresh_sensing(self.environment.objects)
+        if scenario is not None:
+            self.restart()
+
+    def restart(self) -> None:
+        """Restore initial conditions; loaded scenarios always restart paused."""
+        if self.scenario is None:
+            self.central = CentralController(BODY_CENTRE)
+            self.environment = self._initial_environment()
+        else:
+            self.central, self.environment = self.scenario.build()
+            self.paused = True
+        self.selected_object = None
+        self.placement = None
+        self.dragging_object = False
+        self.selected_index = 0
+        self.dragging = False
+        self.accumulator = 0.0
         self.central.refresh_sensing(self.environment.objects)
 
     def _initial_environment(self) -> Environment:
@@ -96,14 +117,7 @@ class Application:
             elif event.key == pygame.K_n and self.paused:
                 self.central.step(SIMULATION_STEP, self.environment)
             elif event.key == pygame.K_d:
-                self.central = CentralController(BODY_CENTRE)
-                self.environment = self._initial_environment()
-                self.selected_object = None
-                self.placement = None
-                self.dragging_object = False
-                self.selected_index = 0
-                self.dragging = False
-                self.accumulator = 0.0
+                self.restart()
             else:
                 self._adjust_parameters(event.key)
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
@@ -186,11 +200,29 @@ class Application:
             self.accumulator -= SIMULATION_STEP
 
 
-def main() -> None:
-    """Run the graphical experiment until the user closes its window."""
+def main(argv: list[str] | None = None) -> None:
+    """Run an optional scenario; invalid files fail before opening a window.
+
+    :param argv: Command-line arguments, or None to read the process arguments.
+    """
+    parser = argparse.ArgumentParser(description="Distributed Octopus Controller")
+    parser.add_argument(
+        "scenario", nargs="?", type=Path, help="JSON scenario to load paused; press Space to play"
+    )
+    args = parser.parse_args(argv)
+    scenario = None
+    if args.scenario is not None:
+        try:
+            scenario = load_scenario(args.scenario)
+        except ValueError as error:
+            parser.error(str(error))
+    application = Application(scenario)
     pygame.init()
     try:
-        pygame.display.set_caption("Distributed Octopus Controller")
+        caption = "Distributed Octopus Controller"
+        if scenario is not None:
+            caption += f" — {scenario.name}"
+        pygame.display.set_caption(caption)
         icon_path = Path(__file__).parent / "assets" / "octopus.png"
         icon = pygame.image.load(icon_path)
         pygame.display.set_icon(icon)
@@ -204,7 +236,6 @@ def main() -> None:
         heading_font = pygame.font.Font(None, 38)
         shortcuts_font = pygame.font.Font(None, 18)
         clock = pygame.time.Clock()
-        application = Application()
         running = True
         while running:
             elapsed_seconds = clock.tick(60) / 1000
