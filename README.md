@@ -4,7 +4,7 @@
 [![Language](https://img.shields.io/badge/language-python-blue.svg)](https://www.python.org)
 [![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/davewalker5/OctopusController)](https://github.com/davewalker5/OctopusController/)
 
-# Chromatophore Simulator
+# Distributed Octopus Controller
 
 _To be completed_
 
