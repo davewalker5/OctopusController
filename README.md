@@ -62,7 +62,7 @@ His apparent determination to investigate and manipulate his surroundings, wheth
 
 This project is a small tribute to Charles and, more broadly, to the remarkable behavioural flexibility and individuality of cephalopods.
 
-Read the full story of Charles →
+Read the full story of Charles in the [Wiki](https://github.com/davewalker5/OctopusController/wiki).
 
 _In memory of Charles — who demonstrated that an octopus may have more interesting things to do than follow instructions. 🐙_
 
