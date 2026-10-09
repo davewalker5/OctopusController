@@ -44,6 +44,28 @@ Its primary purpose is to explore how local control, sensory feedback and the co
 
 The project provides a foundation for further experiments involving tactile feedback, arm cooperation, autonomous exploration and increasingly sophisticated interactions with the environment.
 
+## A Tribute to Charles 🐙
+
+Octopus Controller is dedicated to Charles, a common octopus (Octopus vulgaris) who participated in a series of learning experiments conducted by P. B. Dews at the Naples Zoological Station in the 1950s.
+
+The experiment was straightforward: teach three octopuses — Albert, Bertram and Charles — to operate a lever in exchange for food.
+
+Albert and Bertram cooperated reasonably well.
+
+Charles had other ideas.
+
+He repeatedly bent the lever by applying excessive force, attempted to pull the experimental lamp into his tank, and directed jets of water at the experimenter. Eventually, he broke the lever altogether.
+
+Charles became a memorable example of the difficulty of studying an animal whose behaviour doesn’t necessarily conform to the experimenter’s expectations.
+
+His apparent determination to investigate and manipulate his surroundings, whether or not those activities contributed to the assigned task, captures much of what makes octopuses such fascinating animals.
+
+This project is a small tribute to Charles and, more broadly, to the remarkable behavioural flexibility and individuality of cephalopods.
+
+Read the full story of Charles →
+
+_In memory of Charles — who demonstrated that an octopus may have more interesting things to do than follow instructions. 🐙_
+
 ## Getting Started
 
 Please see the [Wiki](https://github.com/davewalker5/OctopusController/wiki) for the user guide, controls and further details.
