@@ -285,7 +285,7 @@ def draw_sidebar(
         ("Del", "Remove object", True),
         ("Space", "Pause / resume", True),
         ("N", "Step (paused)", paused),
-        ("D", "Reset all", True),
+        ("D", "Restart setup", True),
         ("Esc", "Quit", True),
     ]
     # Present each shortcut on one row: a fixed keypress column makes actions

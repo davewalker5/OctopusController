@@ -5,4 +5,4 @@ cd "$PROJECT_ROOT"
 
 . venv/bin/activate
 
-octopus-controller
+octopus-controller "$@"

@@ -127,7 +127,7 @@ def test_main_starts_renders_and_quits(monkeypatch: pytest.MonkeyPatch) -> None:
         return next(batches)
 
     monkeypatch.setattr(pygame.event, "get", next_events)
-    main()
+    main([])
     assert not pygame.get_init()
 
 
@@ -249,3 +249,67 @@ def test_grasp_controls_release_and_paused_delete() -> None:
     press(application, pygame.K_DELETE)
     assert arm.grip is None
     assert all(obj.identifier != 1 for obj in application.environment.objects)
+
+
+def test_scenario_play_pause_and_restart() -> None:
+    """Loaded setups wait for play, move assigned arms and restart reproducibly."""
+    from octopus_controller.scenario import load_scenario
+
+    path = Path(__file__).resolve().parents[1] / "scenarios" / "two-targets.json"
+    application = Application(load_scenario(path))
+    initial = [arm.controller.arm.points for arm in application.central.arms]
+    objects = application.environment.objects
+    assert application.paused
+    application.advance(0.1)
+    assert [arm.controller.arm.points for arm in application.central.arms] == initial
+    press(application, pygame.K_SPACE)
+    for _ in range(30):
+        application.advance(1 / 60)
+    moved = [arm.controller.arm.points for arm in application.central.arms]
+    assert all((pose != initial[i]) == (i in (0, 2, 4)) for i, pose in enumerate(moved))
+    application.environment.move(1, (40, 110))
+    application.selected_index = 2
+    press(application, pygame.K_RIGHTBRACKET)
+    application.dragging = True
+    application.selected_object = 1
+    press(application, pygame.K_d)
+    assert application.paused
+    assert application.central.simulation_seconds == 0
+    assert application.central.capture_count == 0
+    assert application.environment.objects == objects
+    assert not application.dragging and application.selected_object is None
+    assert application.selected_index == 0
+    assert [arm.controller.arm.points for arm in application.central.arms] == initial
+    press(application, pygame.K_SPACE)
+    for _ in range(30):
+        application.advance(1 / 60)
+    assert [arm.controller.arm.points for arm in application.central.arms] == moved
+
+
+def test_main_loads_scenario(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The command-line scenario reaches the renderer paused with its assignments."""
+    from octopus_controller import app
+
+    path = Path(__file__).resolve().parents[1] / "scenarios" / "two-targets.json"
+    batches = iter([[], [pygame.event.Event(pygame.QUIT)]])
+    monkeypatch.setattr(pygame.event, "get", lambda: next(batches))
+    frames = []
+    monkeypatch.setattr(app, "draw_scene", lambda *args: frames.append(args))
+    app.main([str(path)])
+    assert len(frames) == 1
+    assert frames[0][2] is True
+    assert frames[0][1].arm(2).controller.target == (620, 460)
+    assert not pygame.get_init()
+
+
+def test_main_rejects_bad_scenario_before_display(tmp_path: Path, capsys) -> None:
+    """A bad setup gives a useful command-line error without opening SDL."""
+    from octopus_controller.app import main
+
+    path = tmp_path / "invalid.json"
+    path.write_text('{"version": 1, "arms": [{"number": 3, "target": {"food": "missing"}}]}')
+    with pytest.raises(SystemExit) as error:
+        main([str(path)])
+    assert error.value.code == 2
+    assert "Arm 3 references unknown food" in capsys.readouterr().err
+    assert not pygame.get_init()
