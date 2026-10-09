@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "name": "Independent arms, sensing, avoidance and grasping",
+  "body": [
+    400,
+    460
+  ],
+  "defaults": {
+    "segment_count": 20,
+    "segment_length": 12,
+    "maximum_bend_degrees": 60,
+    "turning_speed_degrees": 30
+  },
+  "food": [
+    {
+      "id": "final-meal",
+      "position": [
+        346.81,
+        256.04
+      ],
+      "radius": 14
+    }
+  ],
+  "obstacles": [
+    {
+      "position": [
+        492,
+        527
+      ],
+      "radius": 14
+    }
+  ],
+  "arms": [
+    {
+      "number": 1,
+      "parameters": {
+        "turning_speed_degrees": 2
+      },
+      "target": {
+        "food": "final-meal"
+      }
+    },
+    {
+      "number": 3,
+      "target": {
+        "position": [
+          532,
+          460
+        ]
+      }
+    },
+    {
+      "number": 5,
+      "target": {
+        "position": [
+          453.19,
+          663.96
+        ]
+      }
+    },
+    {
+      "number": 7,
+      "target": {
+        "position": [
+          196.04,
+          513.19
+        ]
+      }
+    }
+  ]
+}
