@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "octopus-controller"
+version = "1.0.0"
+description = "Distributed Octopus Controller"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+  "pygame-ce>=2.5.7,<3"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+  "ruff>=0.11,<1"
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[project.scripts]
+octopus-controller = "octopus_controller.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+octopus_controller = ["assets/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
