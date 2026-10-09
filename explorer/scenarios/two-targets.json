@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "name": "Two arms reaching for food",
+  "body": [
+    400,
+    460
+  ],
+  "defaults": {
+    "segment_count": 20,
+    "segment_length": 12,
+    "maximum_bend_degrees": 60,
+    "turning_speed_degrees": 14
+  },
+  "food": [
+    {
+      "id": "meal-a",
+      "position": [
+        400,
+        240
+      ],
+      "radius": 12
+    },
+    {
+      "id": "meal-b",
+      "position": [
+        620,
+        460
+      ],
+      "radius": 12
+    }
+  ],
+  "obstacles": [
+    {
+      "position": [
+        520,
+        570
+      ],
+      "radius": 25
+    }
+  ],
+  "arms": [
+    {
+      "number": 1,
+      "target": {
+        "food": "meal-a"
+      }
+    },
+    {
+      "number": 3,
+      "parameters": {
+        "segment_count": 24
+      },
+      "target": {
+        "food": "meal-b"
+      }
+    },
+    {
+      "number": 5,
+      "target": {
+        "position": [
+          400,
+          650
+        ]
+      }
+    }
+  ]
+}

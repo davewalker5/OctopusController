@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Explore octopus-inspired distributed control: eight independent arms, local sensing, obstacle avoidance and grasping."
+    />
+    <title>Octopus Controller · Field Notes</title>
+    <link rel="icon" href="assets/octopus.png" />
+    <link rel="stylesheet" href="css/simulator.css" />
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <main id="simulator">
+      <header class="page-header">
+        <div class="brand">
+          <img src="assets/octopus.png" width="64" height="64" alt="" />
+          <div>
+            <p class="eyebrow">FIELD NOTES / INTERACTIVE EXPLORER</p>
+            <h1>Octopus Controller</h1>
+            <p class="subtitle">Eight arms. Local decisions. Emergent behaviour.</p>
+          </div>
+        </div>
+        <span class="badge">Distributed control</span>
+      </header>
+      <noscript
+        ><p class="error">Enable JavaScript to use this interactive simulation.</p></noscript
+      >
+      <p id="error" class="error" role="alert" hidden></p>
+      <div class="workspace">
+        <div class="visual-column">
+          <section class="card field-card" aria-labelledby="world-title">
+            <div class="field-heading">
+              <div>
+                <p class="eyebrow">THE EXPERIMENT</p>
+                <h2 id="world-title">Original demonstration</h2>
+              </div>
+              <div class="scene-playback">
+                <span id="playback-state" class="status-pill">Paused</span
+                ><button id="scene-play" type="button" class="primary" aria-label="Play simulation">
+                  Play
+                </button>
+              </div>
+            </div>
+            <canvas
+              id="world"
+              tabindex="0"
+              width="760"
+              height="670"
+              aria-label="Eight numbered arms around a fixed body, with food, obstacles and reach targets."
+              aria-describedby="canvas-help"
+            ></canvas>
+            <div class="world-footer">
+              <p id="canvas-help">
+                Click or drag to set Arm 1’s destination. Use the coordinate controls for keyboard
+                placement.
+              </p>
+              <span id="clock">0.00 s · 0 captures</span>
+            </div>
+            <div class="legend" aria-label="Scene legend">
+              <span><i class="food"></i>Food (F)</span
+              ><span><i class="obstacle"></i>Obstacle (O)</span
+              ><span><i class="target"></i>Destination (+)</span
+              ><span><i class="contact"></i>Contact dot</span>
+            </div>
+          </section>
+          <section class="card roster-card" aria-labelledby="roster-title">
+            <div class="section-heading">
+              <h2 id="roster-title">Eight independent arms</h2>
+              <span>Select an arm to inspect</span>
+            </div>
+            <div id="arm-roster" class="arm-roster"></div>
+          </section>
+        </div>
+        <aside class="controls" aria-label="Simulation controls">
+          <section class="card control-card">
+            <p class="eyebrow">01 / SCENARIO &amp; PLAYBACK</p>
+            <label for="scenario">Starting conditions</label
+            ><select id="scenario">
+              <option value="demo">Original demonstration</option>
+              <option value="behaviour-showcase">Behaviour showcase</option>
+              <option value="two-targets">Two arms reaching for food</option>
+            </select>
+            <label class="file-label" for="scenario-file"
+              >Load a scenario file<input
+                id="scenario-file"
+                type="file"
+                accept=".json,application/json"
+            /></label>
+            <div class="button-row">
+              <button id="play" class="primary" type="button">Play</button
+              ><button id="step" type="button">Step</button
+              ><button id="restart" type="button">Restart</button>
+            </div>
+            <p class="hint">Scenarios load paused. Restart restores the starting scene.</p>
+          </section>
+          <section class="card control-card">
+            <p class="eyebrow">02 / SELECTED ARM</p>
+            <label for="selected-arm">Arm</label
+            ><select id="selected-arm"></select>
+            <div class="arm-readout">
+              <strong id="arm-state">Reaching</strong><span id="arm-detail"></span>
+            </div>
+            <div class="button-grid">
+              <button type="button" data-action="idle">Idle</button
+              ><button type="button" data-action="reset">Reset pose</button
+              ><button type="button" data-action="retract">Retract</button
+              ><button type="button" data-action="release">Release</button>
+            </div>
+            <form id="target-form">
+              <fieldset>
+                <legend id="destination-label">Tip destination · pixels</legend>
+                <div class="coordinate-row">
+                  <label
+                    >X<input id="target-x" type="number" step="any" value="400" required /></label
+                  ><label
+                    >Y<input id="target-y" type="number" step="any" value="240" required /></label
+                  ><button type="submit">Assign</button>
+                </div>
+              </fieldset>
+            </form>
+          </section>
+          <section class="card control-card">
+            <p class="eyebrow">03 / ARM PARAMETERS</p>
+            <form id="parameters-form">
+              <div class="parameter-grid">
+                <label>Segments<input id="segment-count" type="number" step="1" required /></label
+                ><label
+                  >Length · px<input id="segment-length" type="number" step="any" required /></label
+                ><label
+                  >Bend · degrees<input
+                    id="maximum-bend"
+                    type="number"
+                    step="any"
+                    required /></label
+                ><label
+                  >Speed · degrees/s<input id="turning-speed" type="number" step="any" required
+                /></label>
+              </div>
+              <button type="submit" class="full-width">Apply parameters</button>
+            </form>
+            <p class="hint">
+              Geometry changes reset this arm and release food. Speed alone preserves its grip.
+              Interactive ranges: 2–40 segments, 6–30 px, 5–180°, 14.32–229.18°/s. File values are
+              retained until edited.
+            </p>
+          </section>
+          <section class="card control-card">
+            <p class="eyebrow">04 / SCENE EDITING</p>
+            <label for="tool">Canvas tool</label
+            ><select id="tool">
+              <option value="target">Set arm destination</option>
+              <option value="object">Select / move object</option>
+              <option value="Food">Place food · one click</option>
+              <option value="Obstacle">Place obstacle · one click</option>
+            </select>
+            <label for="selected-object">Scene object</label
+            ><select id="selected-object">
+              <option value="">No object selected</option>
+            </select>
+            <form id="object-form">
+              <fieldset>
+                <legend>Object position · pixels</legend>
+                <div class="coordinate-row">
+                  <label
+                    >X<input id="object-x" type="number" step="any" value="300" required /></label
+                  ><label
+                    >Y<input id="object-y" type="number" step="any" value="300" required
+                  /></label>
+                </div>
+                <div class="button-grid">
+                  <button type="submit" name="operation" value="Food">Add food</button
+                  ><button type="submit" name="operation" value="Obstacle">Add obstacle</button
+                  ><button id="move-object" type="submit" name="operation" value="move" disabled>
+                    Move selected</button
+                  ><button id="delete-object" type="button" disabled>Delete selected</button>
+                </div>
+              </fieldset>
+            </form>
+          </section>
+          <section class="card control-card">
+            <p class="eyebrow">CAPTURE LOG</p>
+            <ol id="capture-log" class="capture-log">
+              <li>No captures yet.</li>
+            </ol>
+          </section>
+        </aside>
+        <section class="card explanation" aria-labelledby="about-title">
+          <p class="eyebrow">HOW TO EXPLORE</p>
+          <h2 id="about-title">A destination, not a choreography</h2>
+          <p>
+            The central controller assigns destinations. Each segment turns using its own position
+            and a request from its neighbour. Watch a new instruction travel along an arm, or place
+            an obstacle in its path.
+          </p>
+          <div class="explain-grid">
+            <div>
+              <h3>Feel &amp; respond</h3>
+              <p>
+                Segments sense nearby circles. Two adjacent contacts held for a quarter-second can
+                establish a grip on food.
+              </p>
+            </div>
+            <div>
+              <h3>Hold &amp; carry</h3>
+              <p>
+                When an arm holds food, its next destination moves the food. Retract brings it
+                towards the body; Release leaves it in place.
+              </p>
+            </div>
+          </div>
+          <p class="small">
+            This is an illustrative control experiment, not a biological reconstruction. Local rules
+            can become trapped. The body and other arms do not act as collision obstacles; grasping
+            models a rigid attachment, not friction or muscle forces.
+          </p>
+          <p class="tribute">
+            In memory of Charles, an octopus with his own ideas about experiments.
+            <a href="https://github.com/davewalker5/OctopusController/wiki/A-Tribute-To-Charles"
+              >Read his story ↗</a
+            >
+          </p>
+          <details>
+            <summary>Keyboard shortcuts &amp; further reading</summary>
+            <p>
+              Within the explorer, outside editable controls:
+              <kbd>1</kbd>–<kbd>8</kbd> select an arm; <kbd>Space</kbd> play/pause;
+              <kbd>N</kbd> step; <kbd>D</kbd> restart; <kbd>R</kbd> reset arm; <kbd>X</kbd> idle;
+              <kbd>T</kbd> retract; <kbd>G</kbd> release; <kbd>F</kbd>/<kbd>O</kbd> place
+              food/obstacle; <kbd>Delete</kbd> delete selected object. Tab moves normally between
+              controls.
+            </p>
+            <p>
+              <a href="https://github.com/davewalker5/OctopusController/wiki"
+                >Controller documentation ↗</a
+              >
+              ·
+              <a href="https://github.com/davewalker5/OctopusController/wiki/Scenarios"
+                >Scenario format ↗</a
+              >
+            </p>
+          </details>
+        </section>
+      </div>
+      <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
+      <footer class="page-footer">
+        An experiment in embodied, distributed control.
+        <a href="https://github.com/davewalker5/OctopusController">Source &amp; documentation ↗</a>
+      </footer>
+    </main>
+  </body>
+</html>
