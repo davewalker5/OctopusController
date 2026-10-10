@@ -187,3 +187,108 @@ class ScenarioPicker:
             pygame.Rect(220, 601, 680, 26),
             (245, 160, 140) if self.error else muted,
         )
+
+
+class ScenarioNamePrompt:
+    """Edit a scenario label within the existing responsive Pygame window."""
+
+    panel = pygame.Rect(240, 260, 640, 220)
+    field = pygame.Rect(260, 310, 600, 36)
+    cancel_button = pygame.Rect(620, 428, 110, 30)
+    rename_button = pygame.Rect(750, 428, 110, 30)
+
+    def __init__(self, name: str) -> None:
+        self.text = name
+        self.cursor = len(name)
+        self.select_all = True
+        self.cancelled = False
+        self.result: str | None = None
+        self.error = ""
+
+    def accept(self) -> None:
+        """Reject blank labels before publishing the edited name."""
+        if not self.text.strip():
+            self.error = "Please enter a scenario name."
+        else:
+            self.result = self.text.strip()
+
+    def handle_event(self, event: pygame.event.Event) -> None:
+        """Consume editing keys so they cannot also control the simulation."""
+        if event.type == pygame.TEXTINPUT:
+            if self.select_all:
+                self.text, self.cursor = "", 0
+            self.text = self.text[: self.cursor] + event.text + self.text[self.cursor :]
+            self.cursor += len(event.text)
+            self.select_all = False
+            self.error = ""
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.cancelled = True
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.accept()
+            elif event.key == pygame.K_a and getattr(event, "mod", 0) & (
+                pygame.KMOD_CTRL | pygame.KMOD_GUI
+            ):
+                self.select_all = True
+            elif event.key in (pygame.K_BACKSPACE, pygame.K_DELETE):
+                if self.select_all:
+                    self.text, self.cursor = "", 0
+                elif event.key == pygame.K_BACKSPACE and self.cursor:
+                    self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
+                    self.cursor -= 1
+                elif event.key == pygame.K_DELETE:
+                    self.text = self.text[: self.cursor] + self.text[self.cursor + 1 :]
+                self.select_all = False
+            elif event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_HOME, pygame.K_END):
+                if event.key == pygame.K_HOME:
+                    self.cursor = 0
+                elif event.key == pygame.K_END:
+                    self.cursor = len(self.text)
+                else:
+                    self.cursor = max(
+                        0,
+                        min(
+                            len(self.text), self.cursor + (1 if event.key == pygame.K_RIGHT else -1)
+                        ),
+                    )
+                self.select_all = False
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.cancel_button.collidepoint(event.pos):
+                self.cancelled = True
+            elif self.rename_button.collidepoint(event.pos):
+                self.accept()
+            elif self.field.collidepoint(event.pos):
+                self.select_all = True
+
+    def draw(self, screen: pygame.Surface, font: pygame.font.Font) -> None:
+        """Display the full editable name, scrolling horizontally with the caret."""
+        text, accent = (220, 231, 239), (79, 212, 184)
+        shade = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 150))
+        screen.blit(shade, (0, 0))
+        pygame.draw.rect(screen, (22, 37, 51), self.panel, border_radius=10)
+        screen.blit(font.render("Rename scenario", True, text), (260, 278))
+        pygame.draw.rect(screen, (39, 61, 77), self.field, border_radius=4)
+        pygame.draw.rect(screen, accent, self.field, 1, 4)
+        screen.set_clip(self.field.inflate(-12, -4))
+        caret_width = font.size(self.text[: self.cursor])[0]
+        x = self.field.left + 8 - max(0, caret_width - self.field.width + 20)
+        if self.select_all:
+            pygame.draw.rect(
+                screen, (55, 95, 110), (x, self.field.top + 6, font.size(self.text)[0], 24)
+            )
+        screen.blit(font.render(self.text, True, text), (x, self.field.top + 8))
+        pygame.draw.line(
+            screen,
+            accent,
+            (x + caret_width, self.field.top + 6),
+            (x + caret_width, self.field.bottom - 6),
+        )
+        screen.set_clip(None)
+        screen.blit(
+            font.render(self.error or "Enter to rename · Esc to cancel", True, text), (260, 364)
+        )
+        for rect, label in [(self.cancel_button, "Cancel"), (self.rename_button, "Rename")]:
+            pygame.draw.rect(screen, (39, 61, 77), rect, border_radius=4)
+            rendered = font.render(label, True, text)
+            screen.blit(rendered, rendered.get_rect(center=rect.center))

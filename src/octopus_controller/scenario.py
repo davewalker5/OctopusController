@@ -254,7 +254,13 @@ def load_scenario(path: str | Path) -> Scenario:
         raise ValueError(f"{path}: {error}") from error
 
 
-def save_scenario(path: str | Path, central: CentralController, environment: Environment) -> None:
+def save_scenario(
+    path: str | Path,
+    central: CentralController,
+    environment: Environment,
+    *,
+    name: str | None = None,
+) -> None:
     """Export supported starting conditions to a new file, never overwriting one.
 
     Idle arms omit targets. A carrying arm exports its payload destination, not
@@ -266,7 +272,7 @@ def save_scenario(path: str | Path, central: CentralController, environment: Env
     path = Path(path)
     data = {
         "version": 1,
-        "name": path.stem,
+        "name": path.stem if name is None else name,
         "body": list(central.centre),
         "food": [],
         "obstacles": [],

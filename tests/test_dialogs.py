@@ -109,3 +109,15 @@ def test_save_picker_can_browse_folders(tmp_path):
     click(picker, OPEN_BUTTON)
     assert picker.directory == folder and picker.path_focus
     assert picker.path_text == str(folder / "new-scenario.json")
+
+
+def test_name_prompt_edit_and_accept():
+    from octopus_controller.dialogs import ScenarioNamePrompt
+
+    prompt = ScenarioNamePrompt("Old name")
+    prompt.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="New reef"))
+    prompt.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_HOME))
+    prompt.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DELETE))
+    prompt.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="n"))
+    click(prompt, prompt.rename_button)
+    assert prompt.result == "new reef"

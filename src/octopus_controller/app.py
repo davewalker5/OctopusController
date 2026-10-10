@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pygame
 
-from octopus_controller.dialogs import ScenarioPicker
+from octopus_controller.dialogs import ScenarioNamePrompt, ScenarioPicker
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
 from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario, save_scenario
@@ -17,6 +17,7 @@ from octopus_controller.view import (
     HEADER_ICON_SIZE,
     LOAD_SCENARIO_BUTTON,
     SAVE_SCENARIO_BUTTON,
+    SCENARIO_NAME_BUTTON,
     WINDOW_SIZE,
     WORLD,
     draw_scene,
@@ -33,6 +34,8 @@ class Application:
     def __init__(self, scenario: Scenario | None = None) -> None:
         """Create an empty setup or a paused scenario without opening a display."""
         self.scenario = scenario
+        self.name_override: str | None = None
+        self.name_prompt: ScenarioNamePrompt | None = None
         self.save_notice: str | None = None
         self.load_error: str | None = None
         self.scenario_directory = Path.cwd() / "scenarios"
@@ -54,7 +57,9 @@ class Application:
     @property
     def scenario_name(self) -> str:
         """Give the current setup a label even when no scenario is loaded."""
-        return self.scenario.name if self.scenario is not None else "Empty scenario"
+        return self.name_override or (
+            self.scenario.name if self.scenario is not None else "Empty scenario"
+        )
 
     def open_scenario(self, *, saving: bool = False) -> None:
         """Open a modal picker without blocking the Pygame event loop."""
@@ -72,6 +77,7 @@ class Application:
             self.load_error = str(error)
             return
         self.scenario = scenario
+        self.name_override = None
         self.central, self.environment = central, environment
         self.scenario_directory = path.parent
         self.paused = True
@@ -83,7 +89,9 @@ class Application:
     def restart(self) -> None:
         """Restore initial conditions; loaded scenarios always restart paused."""
         if self.scenario is None:
+            name = self.name_override
             self.clear()
+            self.name_override = name
             return
         else:
             self.central, self.environment = self.scenario.build()
@@ -99,6 +107,8 @@ class Application:
     def clear(self) -> None:
         """Return to the empty startup setup with default, idle arms and no history."""
         self.scenario = None
+        self.name_override = None
+        self.name_prompt = None
         self.central = CentralController(BODY_CENTRE)
         for arm in self.central.arms:
             arm.idle()
@@ -125,6 +135,14 @@ class Application:
         """
         if event.type == pygame.QUIT:
             return False
+        if self.name_prompt is not None:
+            self.name_prompt.handle_event(event)
+            if self.name_prompt.cancelled:
+                self.name_prompt = None
+            elif self.name_prompt.result is not None:
+                self.name_override = self.name_prompt.result
+                self.name_prompt = None
+            return True
         if self.picker is not None:
             self.picker.handle_event(event)
             if self.picker.cancelled:
@@ -133,7 +151,7 @@ class Application:
                 path = self.picker.result
                 if self.picker.saving:
                     try:
-                        save_scenario(path, self.central, self.environment)
+                        save_scenario(path, self.central, self.environment, name=self.scenario_name)
                     except (OSError, ValueError) as error:
                         self.picker.error = str(error)
                         self.picker.result = None
@@ -216,6 +234,13 @@ class Application:
             and CLEAR_SCENARIO_BUTTON.collidepoint(event.pos)
         ):
             self.clear()
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and SCENARIO_NAME_BUTTON.collidepoint(event.pos)
+        ):
+            self.dragging = self.dragging_object = False
+            self.name_prompt = ScenarioNamePrompt(self.scenario_name)
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
             if event.button == 1:
                 self.dragging_object = False
@@ -285,7 +310,7 @@ class Application:
 
         :param elapsed_seconds: Real frame duration in seconds from the display clock.
         """
-        if self.paused or self.picker is not None:
+        if self.paused or self.picker is not None or self.name_prompt is not None:
             return
 
         # Fixed ticks make the solver independent of rendering frequency. Limiting
@@ -364,6 +389,8 @@ def main(argv: list[str] | None = None) -> None:
                     screen.set_clip(None)
                 if application.picker is not None:
                     application.picker.draw(screen, font)
+                if application.name_prompt is not None:
+                    application.name_prompt.draw(screen, font)
                 pygame.display.flip()
     finally:
         # Release SDL resources even if an input or drawing error is raised.

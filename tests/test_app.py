@@ -431,7 +431,7 @@ def test_failed_save_stays_in_picker_and_cancel_is_safe(monkeypatch, tmp_path):
     application = Application()
     application.scenario_directory = tmp_path
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise PermissionError("Read-only folder")
 
     monkeypatch.setattr(app, "save_scenario", fail)
@@ -509,3 +509,56 @@ def test_empty_startup_stays_in_default_posture_when_played():
     application.advance(0.1)
     assert [a.controller.arm.points for a in application.central.arms] == before
     assert application.environment.objects == ()
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_rename_save_reload_and_clear(tmp_path, paused):
+    from octopus_controller.dialogs import OPEN_BUTTON
+    from octopus_controller.scenario import load_scenario
+    from octopus_controller.view import SCENARIO_NAME_BUTTON
+
+    application = Application()
+    application.paused = paused
+    application.scenario_directory = tmp_path
+    central = application.central
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SCENARIO_NAME_BUTTON.center)
+    )
+    assert application.name_prompt.text == "Empty scenario"
+    application.advance(30)
+    assert central.simulation_seconds == 0
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="My reef 🐙"))
+    press(application, pygame.K_RETURN)
+    assert application.scenario_name == "My reef 🐙"
+    assert application.name_prompt is None
+    assert application.paused == paused and application.central is central
+    press(application, pygame.K_d)
+    assert application.scenario_name == "My reef 🐙"
+    application.open_scenario(saving=True)
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="different-filename.json"))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=OPEN_BUTTON.center)
+    )
+    path = tmp_path / "different-filename.json"
+    assert load_scenario(path).name == "My reef 🐙"
+    application.clear()
+    assert application.scenario_name == "Empty scenario"
+    application.load_selected_scenario(path)
+    assert application.scenario_name == "My reef 🐙"
+
+
+def test_rename_blank_cancel_and_quit():
+    from octopus_controller.view import SCENARIO_NAME_BUTTON
+
+    application = Application()
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SCENARIO_NAME_BUTTON.center)
+    )
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="   "))
+    press(application, pygame.K_RETURN)
+    assert application.name_prompt.error
+    assert application.scenario_name == "Empty scenario"
+    assert not application.handle_event(pygame.event.Event(pygame.QUIT))
+    assert press(application, pygame.K_ESCAPE)
+    assert application.name_prompt is None
+    assert application.scenario_name == "Empty scenario"

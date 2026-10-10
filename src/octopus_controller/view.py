@@ -9,6 +9,7 @@ from octopus_controller.sensing import ObjectKind, WorldObject
 
 HEADER_ICON_SIZE = (64, 64)
 SIDEBAR_TOP = 20
+SCENARIO_NAME_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 30, 278, 23)
 LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 86, 26)
 SAVE_SCENARIO_BUTTON = pygame.Rect(904, SIDEBAR_TOP + 56, 86, 26)
 CLEAR_SCENARIO_BUTTON = pygame.Rect(1000, SIDEBAR_TOP + 56, 86, 26)
@@ -238,7 +239,8 @@ def draw_sidebar(
         while name and font.size(name + "…")[0] > 278:
             name = name[:-1]
         name += "…"
-    screen.blit(font.render(name, True, TEXT), (808, SIDEBAR_TOP + 33))
+    pygame.draw.rect(screen, (29, 46, 61), SCENARIO_NAME_BUTTON, border_radius=4)
+    screen.blit(font.render(name, True, ACCENT), (808, SIDEBAR_TOP + 33))
     for rect, text in [
         (LOAD_SCENARIO_BUTTON, "Load"),
         (SAVE_SCENARIO_BUTTON, "Save"),
