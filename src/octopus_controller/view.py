@@ -9,6 +9,7 @@ from octopus_controller.sensing import ObjectKind, WorldObject
 
 HEADER_ICON_SIZE = (64, 64)
 SIDEBAR_TOP = 20
+LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 278, 26)
 CONTROL_STACK_BOTTOM = SIDEBAR_TOP + 740
 WINDOW_SIZE = (1120, CONTROL_STACK_BOTTOM + 20)
 # Share the lower edge with the final card so the world and controls stay aligned.
@@ -41,6 +42,8 @@ def draw_scene(
     selected_object: int | None = None,
     placement: ObjectKind | None = None,
     shortcuts_font: pygame.font.Font | None = None,
+    scenario_name: str = "Original demonstration",
+    load_error: str | None = None,
 ) -> None:
     """Draw eight arms, assignments, selected-arm settings and keyboard reference.
 
@@ -55,6 +58,8 @@ def draw_scene(
     :param selected_object: Object ID highlighted for moving or deletion.
     :param placement: One-click placement tool, or None for normal target assignment.
     :param shortcuts_font: Smaller shortcut font; omitted callers use an 18-pixel default.
+    :param scenario_name: Name of the currently loaded setup.
+    :param load_error: File loading error, or None when no error is displayed.
     """
     # Clear the previous frame so moving segments and labels leave no trails.
     # Pygame draws in call order: later shapes appear over earlier ones.
@@ -130,6 +135,7 @@ def draw_scene(
         paused,
         font,
         shortcuts_font if shortcuts_font is not None else pygame.font.Font(None, 18),
+        scenario_name,
     )
     if placement is not None:
         # Keep the active placement instruction close to the world where the
@@ -140,6 +146,31 @@ def draw_scene(
         box = hint.get_rect(topleft=(36, WORLD.bottom - 33)).inflate(16, 12)
         pygame.draw.rect(screen, (39, 61, 77), box, border_radius=6)
         screen.blit(hint, (36, WORLD.bottom - 33))
+
+    if load_error is not None:
+        lines = wrap_text(load_error, font, WORLD.width - 64)
+        box = pygame.Rect(WORLD.left + 16, WORLD.top + 16, WORLD.width - 32, 64 + 22 * len(lines))
+        pygame.draw.rect(screen, (62, 36, 39), box, border_radius=8)
+        screen.blit(
+            font.render("Could not load scenario — Esc to dismiss", True, TEXT),
+            (box.left + 16, box.top + 12),
+        )
+        for index, line in enumerate(lines):
+            screen.blit(font.render(line, True, TEXT), (box.left + 16, box.top + 42 + index * 22))
+
+
+def wrap_text(text: str, font: pygame.font.Font, width: int) -> list[str]:
+    """Wrap even unbroken filenames to fit a fixed-width panel."""
+    lines = []
+    line = ""
+    for character in " ".join(text.split()):
+        if line and font.size(line + character)[0] > width:
+            lines.append(line)
+            line = ""
+        line += character
+    if line:
+        lines.append(line)
+    return lines or [""]
 
 
 def draw_card(
@@ -185,6 +216,7 @@ def draw_sidebar(
     paused: bool,
     font: pygame.font.Font,
     shortcuts_font: pygame.font.Font,
+    scenario_name: str = "Original demonstration",
 ) -> None:
     """Group live arm status, selected settings and shortcuts into distinct cards.
 
@@ -194,18 +226,31 @@ def draw_sidebar(
     :param paused: Whether automatic simulation updates are suspended.
     :param font: Shared label font.
     :param shortcuts_font: Smaller font for the keypress/action table.
+    :param scenario_name: Current setup name; long labels are ellipsized.
     """
-    # Anchor all three cards to the window margin rather than the world grid.
+    # Anchor the cards to the window margin rather than the world grid.
     # Keeping their positions relative to one top edge preserves the stack spacing.
-    top = SIDEBAR_TOP
-    draw_card(screen, pygame.Rect(794, top, 306, 164), "ARMS", font)
+    draw_card(screen, pygame.Rect(794, SIDEBAR_TOP, 306, 88), "SCENARIO", font)
+    name = " ".join(scenario_name.split())
+    if font.size(name)[0] > 278:
+        while name and font.size(name + "…")[0] > 278:
+            name = name[:-1]
+        name += "…"
+    screen.blit(font.render(name, True, TEXT), (808, SIDEBAR_TOP + 33))
+    pygame.draw.rect(screen, (39, 61, 77), LOAD_SCENARIO_BUTTON, border_radius=5)
+    pygame.draw.rect(screen, ACCENT, LOAD_SCENARIO_BUTTON, width=1, border_radius=5)
+    label = shortcuts_font.render("Load scenario…   Ctrl/Cmd+O", True, TEXT)
+    screen.blit(label, label.get_rect(center=LOAD_SCENARIO_BUTTON.center))
+
+    top = SIDEBAR_TOP + 100
+    draw_card(screen, pygame.Rect(794, top, 306, 144), "ARMS", font)
     # Keep run state visible without competing with the main window heading.
     run_label = font.render("PAUSED" if paused else "RUNNING", True, MUTED if paused else ACCENT)
     screen.blit(run_label, run_label.get_rect(topright=(1086, top + 12)))
     for index, arm in enumerate(central.arms):
         # Two columns shorten the roster while retaining stable number order:
         # read across each row, just as the shortcut pairs below are read.
-        row = pygame.Rect(802 + (index % 2) * 146, top + 42 + (index // 2) * 28, 144, 25)
+        row = pygame.Rect(802 + (index % 2) * 146, top + 36 + (index // 2) * 24, 144, 23)
         if index == selected_index:
             pygame.draw.rect(screen, (39, 61, 77), row, border_radius=5)
             pygame.draw.rect(screen, ARM_COLOURS[index], row, width=1, border_radius=5)
@@ -218,7 +263,7 @@ def draw_sidebar(
     parameters = controller.arm.parameters
     draw_card(
         screen,
-        pygame.Rect(794, top + 176, 306, 222),
+        pygame.Rect(794, top + 156, 306, 202),
         f"ARM {selected_index + 1}  /  SETTINGS",
         font,
     )
@@ -236,7 +281,7 @@ def draw_sidebar(
                 centre[0] - selected.carry_goal[0], centre[1] - selected.carry_goal[1]
             )
             distance = f"Carry distance  {remaining:.1f} px"
-    screen.blit(shortcuts_font.render(distance, True, TEXT), (808, top + 213))
+    screen.blit(shortcuts_font.render(distance, True, TEXT), (808, top + 189))
 
     # Align values and adjustment keys into fixed columns so changing a number
     # does not move the shortcut hints. All four settings affect only this arm.
@@ -247,19 +292,19 @@ def draw_sidebar(
         ("Speed", f"{parameters.turning_speed:.2f} rad/s", ";  '"),
     ]
     for index, (label, value, keys) in enumerate(settings):
-        y = top + 238 + index * 24
+        y = top + 210 + index * 24
         screen.blit(shortcuts_font.render(label, True, MUTED), (808, y + 3))
         screen.blit(shortcuts_font.render(value, True, TEXT), (913, y + 3))
         draw_keycap(screen, keys, (1048, y), shortcuts_font)
 
     sensor_count = len({contact.segment_index for contact in selected.contacts})
     kinds = ", ".join(sorted({contact.kind.value for contact in selected.contacts})) or "None"
-    pygame.draw.line(screen, (39, 56, 72), (808, top + 342), (1086, top + 342))
+    pygame.draw.line(screen, (39, 56, 72), (808, top + 312), (1086, top + 312))
     screen.blit(
         shortcuts_font.render(
             f"Sensors  {sensor_count}/{parameters.segment_count}  /  {kinds}", True, MUTED
         ),
-        (808, top + 352),
+        (808, top + 321),
     )
     last_capture = central.capture_reports[-1] if central.capture_reports else None
     report = (
@@ -268,10 +313,10 @@ def draw_sidebar(
         else "No captures reported"
     )
     screen.blit(
-        shortcuts_font.render(report, True, ACCENT if last_capture else MUTED), (808, top + 376)
+        shortcuts_font.render(report, True, ACCENT if last_capture else MUTED), (808, top + 342)
     )
 
-    draw_card(screen, pygame.Rect(794, top + 410, 306, 330), "KEYBOARD & MOUSE", font)
+    draw_card(screen, pygame.Rect(794, top + 370, 306, 270), "KEYBOARD & MOUSE", font)
     shortcuts = [
         ("1-8 / Tab", "Select arm", True),
         ("Click / drag", "Reach or carry", True),
@@ -290,13 +335,13 @@ def draw_sidebar(
     ]
     # Present each shortcut on one row: a fixed keypress column makes actions
     # easy to scan without alternating between separate groups of key labels.
-    screen.blit(shortcuts_font.render("KEYPRESS", True, MUTED), (808, top + 445))
-    screen.blit(shortcuts_font.render("ACTION", True, MUTED), (919, top + 445))
-    pygame.draw.line(screen, (60, 79, 96), (808, top + 462), (1086, top + 462))
+    screen.blit(shortcuts_font.render("KEYPRESS", True, MUTED), (808, top + 401))
+    screen.blit(shortcuts_font.render("ACTION", True, MUTED), (919, top + 401))
+    pygame.draw.line(screen, (60, 79, 96), (808, top + 417), (1086, top + 417))
     for index, (keys, description, enabled) in enumerate(shortcuts):
-        y = top + 469 + index * 19
+        y = top + 425 + index * 15
         if index % 2 == 0:
-            pygame.draw.rect(screen, (27, 43, 58), (804, y - 3, 286, 19), border_radius=3)
+            pygame.draw.rect(screen, (27, 43, 58), (804, y - 3, 286, 15), border_radius=3)
         screen.blit(shortcuts_font.render(keys, True, TEXT if enabled else MUTED), (808, y))
         screen.blit(shortcuts_font.render(description, True, MUTED), (919, y))
 

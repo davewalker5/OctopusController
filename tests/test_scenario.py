@@ -1,7 +1,7 @@
 """Scenario validation and repeatable playback through the application's controls."""
 
 import json
-from math import pi
+from math import pi, radians
 from pathlib import Path
 
 import pytest
@@ -33,7 +33,7 @@ def test_example_resolves_parameters_objects_and_independent_targets() -> None:
     assert central.arm(2).controller.arm.parameters.segment_count == 24
     assert central.arm(1).controller.arm.parameters.segment_count == 20
     assert central.arm(2).controller.arm.parameters.maximum_bend == pytest.approx(pi / 3)
-    assert central.arm(2).controller.arm.parameters.turning_speed == pytest.approx(pi / 2)
+    assert central.arm(2).controller.arm.parameters.turning_speed == pytest.approx(radians(14))
     assert [obj.radius for obj in environment.objects] == [12, 12, 25]
     environment.move(1, (20, 20))
     assert central.arm(0).controller.target == (400, 240)

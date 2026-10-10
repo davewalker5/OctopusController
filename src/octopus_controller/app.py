@@ -7,11 +7,18 @@ from pathlib import Path
 
 import pygame
 
+from octopus_controller.dialogs import ScenarioPicker
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
 from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario
 from octopus_controller.sensing import Environment, ObjectKind
-from octopus_controller.view import HEADER_ICON_SIZE, WINDOW_SIZE, WORLD, draw_scene
+from octopus_controller.view import (
+    HEADER_ICON_SIZE,
+    LOAD_SCENARIO_BUTTON,
+    WINDOW_SIZE,
+    WORLD,
+    draw_scene,
+)
 
 SIMULATION_STEP = 1 / 120
 MAXIMUM_FRAME_TIME = 0.1
@@ -24,6 +31,11 @@ class Application:
     def __init__(self, scenario: Scenario | None = None) -> None:
         """Create a default experiment or a paused scenario without opening a display."""
         self.scenario = scenario
+        self.load_error: str | None = None
+        self.scenario_directory = Path.cwd() / "scenarios"
+        if not self.scenario_directory.is_dir():
+            self.scenario_directory = Path.cwd()
+        self.picker: ScenarioPicker | None = None
         self.central = CentralController(BODY_CENTRE)
         self.selected_index = 0
         self.paused = False
@@ -36,6 +48,34 @@ class Application:
         self.central.refresh_sensing(self.environment.objects)
         if scenario is not None:
             self.restart()
+
+    @property
+    def scenario_name(self) -> str:
+        """Give the current setup a label even for the built-in demonstration."""
+        return self.scenario.name if self.scenario is not None else "Original demonstration"
+
+    def open_scenario(self) -> None:
+        """Open a modal picker without blocking the Pygame event loop."""
+        self.dragging = self.dragging_object = False
+        self.load_error = None
+        self.picker = ScenarioPicker(self.scenario_directory)
+
+    def load_selected_scenario(self, path: Path) -> None:
+        """Validate and build before replacing the current scene or restart setup."""
+        try:
+            scenario = load_scenario(path)
+            central, environment = scenario.build()
+        except ValueError as error:
+            self.load_error = str(error)
+            return
+        self.scenario = scenario
+        self.central, self.environment = central, environment
+        self.scenario_directory = path.parent
+        self.paused = True
+        self.selected_index = 0
+        self.selected_object = None
+        self.placement = None
+        self.accumulator = 0.0
 
     def restart(self) -> None:
         """Restore initial conditions; loaded scenarios always restart paused."""
@@ -77,10 +117,25 @@ class Application:
         """
         if event.type == pygame.QUIT:
             return False
+        if self.picker is not None:
+            self.picker.handle_event(event)
+            if self.picker.cancelled:
+                self.picker = None
+            elif self.picker.result is not None:
+                path = self.picker.result
+                self.picker = None
+                self.load_selected_scenario(path)
+            return True
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_o and getattr(event, "mod", 0) & (
+                pygame.KMOD_CTRL | pygame.KMOD_GUI
+            ):
+                self.open_scenario()
+            elif event.key == pygame.K_ESCAPE and self.load_error is not None:
+                self.load_error = None
+            elif event.key == pygame.K_ESCAPE:
                 return False
-            if pygame.K_1 <= event.key <= pygame.K_8 or event.key == pygame.K_TAB:
+            elif pygame.K_1 <= event.key <= pygame.K_8 or event.key == pygame.K_TAB:
                 # End any drag before changing selection so one gesture cannot
                 # accidentally move a second arm's target halfway through.
                 self.dragging = False
@@ -120,6 +175,12 @@ class Application:
                 self.restart()
             else:
                 self._adjust_parameters(event.key)
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and LOAD_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.open_scenario()
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
             if event.button == 1:
                 self.dragging_object = False
@@ -189,7 +250,7 @@ class Application:
 
         :param elapsed_seconds: Real frame duration in seconds from the display clock.
         """
-        if self.paused:
+        if self.paused or self.picker is not None:
             return
 
         # Fixed ticks make the solver independent of rendering frequency. Limiting
@@ -217,12 +278,11 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as error:
             parser.error(str(error))
     application = Application(scenario)
+    if args.scenario is not None:
+        application.scenario_directory = args.scenario.resolve().parent
     pygame.init()
     try:
-        caption = "Distributed Octopus Controller"
-        if scenario is not None:
-            caption += f" — {scenario.name}"
-        pygame.display.set_caption(caption)
+        pygame.display.set_caption(f"Distributed Octopus Controller — {application.scenario_name}")
         icon_path = Path(__file__).parent / "assets" / "octopus.png"
         icon = pygame.image.load(icon_path)
         pygame.display.set_icon(icon)
@@ -243,6 +303,9 @@ def main(argv: list[str] | None = None) -> None:
                 if not application.handle_event(event):
                     running = False
             if running:
+                pygame.display.set_caption(
+                    f"Distributed Octopus Controller — {application.scenario_name}"
+                )
                 application.advance(elapsed_seconds)
                 draw_scene(
                     screen,
@@ -256,7 +319,11 @@ def main(argv: list[str] | None = None) -> None:
                     application.selected_object,
                     application.placement,
                     shortcuts_font,
+                    application.scenario_name,
+                    application.load_error,
                 )
+                if application.picker is not None:
+                    application.picker.draw(screen, font)
                 pygame.display.flip()
     finally:
         # Release SDL resources even if an input or drawing error is raised.

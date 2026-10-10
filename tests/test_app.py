@@ -313,3 +313,85 @@ def test_main_rejects_bad_scenario_before_display(tmp_path: Path, capsys) -> Non
     assert error.value.code == 2
     assert "Arm 3 references unknown food" in capsys.readouterr().err
     assert not pygame.get_init()
+
+
+def test_picker_load_cancel_and_invalid_file(tmp_path):
+    """Modal input freezes movement, preserves cancellation and loads transactionally."""
+    from octopus_controller.view import LOAD_SCENARIO_BUTTON
+
+    path = tmp_path / "reef.json"
+    path.write_text('{"version": 1, "name": "New reef"}')
+    application = Application()
+    application.scenario_directory = tmp_path
+    application.advance(0.1)
+    central = application.central
+    before = central.simulation_seconds
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=LOAD_SCENARIO_BUTTON.center)
+    )
+    assert application.picker is not None
+    application.advance(30)
+    assert central.simulation_seconds == before
+    press(application, pygame.K_SPACE)
+    assert not application.paused
+    assert press(application, pygame.K_ESCAPE)
+    assert application.picker is None and application.central is central
+    application.open_scenario()
+    press(application, pygame.K_RETURN)
+    assert application.picker is None
+    assert application.scenario_name == "New reef" and application.paused
+    assert application.central.simulation_seconds == 0
+    assert application.central.capture_count == 0
+    assert application.selected_index == 0
+    press(application, pygame.K_d)
+    assert application.scenario_name == "New reef"
+    central = application.central
+    path.write_text('{"version": 99}')
+    application.open_scenario()
+    press(application, pygame.K_RETURN)
+    assert application.central is central
+    assert application.load_error
+    assert press(application, pygame.K_ESCAPE)
+    assert application.load_error is None
+
+
+@pytest.mark.parametrize("modifier", [pygame.KMOD_CTRL, pygame.KMOD_GUI])
+def test_picker_shortcut_and_quit(modifier):
+    """Opening the picker cannot also place an obstacle, and Quit stays responsive."""
+    application = Application()
+    application.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o, mod=modifier))
+    assert application.picker is not None and application.placement is None
+    assert not application.handle_event(pygame.event.Event(pygame.QUIT))
+
+
+def test_main_renders_picker_and_loads_without_blocking(monkeypatch, tmp_path):
+    """The real loop renders multiple picker frames, then loads and updates its caption."""
+    from octopus_controller import app
+
+    path = tmp_path / "reef.json"
+    path.write_text('{"version": 1, "name": "Live reef"}')
+    monkeypatch.chdir(tmp_path)
+    batches = iter(
+        [
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o, mod=pygame.KMOD_CTRL)],
+            [],
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
+            [pygame.event.Event(pygame.QUIT)],
+        ]
+    )
+    monkeypatch.setattr(pygame.event, "get", lambda: next(batches))
+    frames, captions = [], []
+    real_draw = app.draw_scene
+
+    def draw(*args):
+        frames.append(args)
+        real_draw(*args)
+
+    monkeypatch.setattr(app, "draw_scene", draw)
+    monkeypatch.setattr(pygame.display, "set_caption", captions.append)
+    app.main([])
+    assert len(frames) == 3
+    assert frames[0][1].simulation_seconds == 0
+    assert frames[-1][-2] == "Live reef"
+    assert frames[-1][2] is True
+    assert captions[-1].endswith("Live reef")
