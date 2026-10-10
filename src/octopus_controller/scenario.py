@@ -252,3 +252,49 @@ def load_scenario(path: str | Path) -> Scenario:
     # one public error type, retaining the source path and original exception.
     except (OSError, ValueError) as error:
         raise ValueError(f"{path}: {error}") from error
+
+
+def save_scenario(path: str | Path, central: CentralController, environment: Environment) -> None:
+    """Export supported starting conditions to a new file, never overwriting one.
+
+    Idle arms omit targets. A carrying arm exports its payload destination, not
+    the solver's temporary tip correction. Poses, grips and history are outside
+    version 1; food is exported at its current location as an unheld object.
+    """
+    from math import degrees
+
+    path = Path(path)
+    data = {
+        "version": 1,
+        "name": path.stem,
+        "body": list(central.centre),
+        "food": [],
+        "obstacles": [],
+        "arms": [],
+    }
+    for obj in environment.objects:
+        entry = {"position": list(obj.centre), "radius": obj.radius}
+        if obj.kind is ObjectKind.FOOD:
+            entry["id"] = f"food-{obj.identifier}"
+        data["food" if obj.kind is ObjectKind.FOOD else "obstacles"].append(entry)
+    for number, arm in enumerate(central.arms, 1):
+        parameters = arm.controller.arm.parameters
+        entry = {
+            "number": number,
+            "parameters": {
+                "segment_count": parameters.segment_count,
+                "segment_length": parameters.segment_length,
+                "maximum_bend_degrees": degrees(parameters.maximum_bend),
+                "turning_speed_degrees": degrees(parameters.turning_speed),
+            },
+        }
+        if arm.active:
+            target = arm.carry_goal if arm.grip is not None else arm.controller.target
+            if target is not None:
+                entry["target"] = {"position": list(target)}
+        data["arms"].append(entry)
+    # Validate before creating a file, using the same strict contract as loading.
+    parse_scenario(data)
+    content = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    with path.open("x", encoding="utf-8") as output:
+        output.write(content)

@@ -9,7 +9,8 @@ from octopus_controller.sensing import ObjectKind, WorldObject
 
 HEADER_ICON_SIZE = (64, 64)
 SIDEBAR_TOP = 20
-LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 278, 26)
+LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 134, 26)
+SAVE_SCENARIO_BUTTON = pygame.Rect(952, SIDEBAR_TOP + 56, 134, 26)
 CONTROL_STACK_BOTTOM = SIDEBAR_TOP + 740
 WINDOW_SIZE = (1120, CONTROL_STACK_BOTTOM + 20)
 # Share the lower edge with the final card so the world and controls stay aligned.
@@ -237,10 +238,14 @@ def draw_sidebar(
             name = name[:-1]
         name += "…"
     screen.blit(font.render(name, True, TEXT), (808, SIDEBAR_TOP + 33))
-    pygame.draw.rect(screen, (39, 61, 77), LOAD_SCENARIO_BUTTON, border_radius=5)
-    pygame.draw.rect(screen, ACCENT, LOAD_SCENARIO_BUTTON, width=1, border_radius=5)
-    label = shortcuts_font.render("Load scenario…   Ctrl/Cmd+O", True, TEXT)
-    screen.blit(label, label.get_rect(center=LOAD_SCENARIO_BUTTON.center))
+    for rect, text in [
+        (LOAD_SCENARIO_BUTTON, "Load scenario…"),
+        (SAVE_SCENARIO_BUTTON, "Save scenario…"),
+    ]:
+        pygame.draw.rect(screen, (39, 61, 77), rect, border_radius=5)
+        pygame.draw.rect(screen, ACCENT, rect, width=1, border_radius=5)
+        label = shortcuts_font.render(text, True, TEXT)
+        screen.blit(label, label.get_rect(center=rect.center))
 
     top = SIDEBAR_TOP + 100
     draw_card(screen, pygame.Rect(794, top, 306, 144), "ARMS", font)

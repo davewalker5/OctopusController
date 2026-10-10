@@ -395,3 +395,55 @@ def test_main_renders_picker_and_loads_without_blocking(monkeypatch, tmp_path):
     assert frames[-1][-2] == "Live reef"
     assert frames[-1][2] is True
     assert captions[-1].endswith("Live reef")
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_save_current_scene_keeps_live_state_and_restart(tmp_path, paused):
+    from octopus_controller.dialogs import OPEN_BUTTON
+    from octopus_controller.scenario import load_scenario
+    from octopus_controller.view import SAVE_SCENARIO_BUTTON
+
+    application = Application()
+    application.scenario_directory = tmp_path
+    application.paused = paused
+    application.selected_index = 4
+    central = application.central
+    central.assign_reach(4, (350, 650))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SAVE_SCENARIO_BUTTON.center)
+    )
+    assert application.picker.saving
+    application.advance(10)
+    assert central.simulation_seconds == 0
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="snapshot.json"))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=OPEN_BUTTON.center)
+    )
+    assert application.picker is None
+    assert application.central is central and application.paused == paused
+    assert application.selected_index == 4 and application.scenario is None
+    assert application.save_notice == "Saved snapshot.json"
+    assert load_scenario(tmp_path / "snapshot.json").arms[4].target == (350, 650)
+
+
+def test_failed_save_stays_in_picker_and_cancel_is_safe(monkeypatch, tmp_path):
+    from octopus_controller import app
+
+    application = Application()
+    application.scenario_directory = tmp_path
+
+    def fail(*args):
+        raise PermissionError("Read-only folder")
+
+    monkeypatch.setattr(app, "save_scenario", fail)
+    application.handle_event(
+        pygame.event.Event(pygame.KEYDOWN, key=pygame.K_s, mod=pygame.KMOD_GUI)
+    )
+    assert application.picker.saving
+    press(application, pygame.K_RETURN)
+    assert application.picker is not None
+    assert application.picker.result is None
+    assert application.picker.error == "Read-only folder"
+    assert not list(tmp_path.iterdir())
+    press(application, pygame.K_ESCAPE)
+    assert application.picker is None and not application.paused

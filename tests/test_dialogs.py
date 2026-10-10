@@ -81,3 +81,31 @@ def test_unreadable_folder_is_recoverable(monkeypatch, tmp_path):
     picker.browse(tmp_path / "private")
     assert picker.directory == tmp_path
     assert "Access denied" in picker.error
+
+
+def test_save_picker_new_filename_and_no_overwrite(tmp_path):
+    picker = ScenarioPicker(tmp_path, saving=True)
+    assert picker.path_focus and picker.select_all
+    picker.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="new reef"))
+    click(picker, OPEN_BUTTON)
+    assert picker.result == tmp_path / "new reef.json"
+    picker.result.write_text("existing")
+    picker = ScenarioPicker(tmp_path, saving=True)
+    picker.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="new reef"))
+    click(picker, OPEN_BUTTON)
+    assert picker.result is None and "exists" in picker.error
+    assert (tmp_path / "new reef.json").read_text() == "existing"
+
+
+def test_save_picker_can_browse_folders(tmp_path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    picker = ScenarioPicker(tmp_path, saving=True)
+    picker.handle_event(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=(FILE_LIST.left + 5, FILE_LIST.top + 5)
+        )
+    )
+    click(picker, OPEN_BUTTON)
+    assert picker.directory == folder and picker.path_focus
+    assert picker.path_text == str(folder / "new-scenario.json")

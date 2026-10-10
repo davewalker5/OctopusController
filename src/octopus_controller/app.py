@@ -10,11 +10,12 @@ import pygame
 from octopus_controller.dialogs import ScenarioPicker
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
-from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario
+from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario, save_scenario
 from octopus_controller.sensing import Environment, ObjectKind
 from octopus_controller.view import (
     HEADER_ICON_SIZE,
     LOAD_SCENARIO_BUTTON,
+    SAVE_SCENARIO_BUTTON,
     WINDOW_SIZE,
     WORLD,
     draw_scene,
@@ -31,6 +32,7 @@ class Application:
     def __init__(self, scenario: Scenario | None = None) -> None:
         """Create a default experiment or a paused scenario without opening a display."""
         self.scenario = scenario
+        self.save_notice: str | None = None
         self.load_error: str | None = None
         self.scenario_directory = Path.cwd() / "scenarios"
         if not self.scenario_directory.is_dir():
@@ -54,11 +56,12 @@ class Application:
         """Give the current setup a label even for the built-in demonstration."""
         return self.scenario.name if self.scenario is not None else "Original demonstration"
 
-    def open_scenario(self) -> None:
+    def open_scenario(self, *, saving: bool = False) -> None:
         """Open a modal picker without blocking the Pygame event loop."""
         self.dragging = self.dragging_object = False
         self.load_error = None
-        self.picker = ScenarioPicker(self.scenario_directory)
+        self.save_notice = None
+        self.picker = ScenarioPicker(self.scenario_directory, saving=saving)
 
     def load_selected_scenario(self, path: Path) -> None:
         """Validate and build before replacing the current scene or restart setup."""
@@ -123,14 +126,29 @@ class Application:
                 self.picker = None
             elif self.picker.result is not None:
                 path = self.picker.result
-                self.picker = None
-                self.load_selected_scenario(path)
+                if self.picker.saving:
+                    try:
+                        save_scenario(path, self.central, self.environment)
+                    except (OSError, ValueError) as error:
+                        self.picker.error = str(error)
+                        self.picker.result = None
+                    else:
+                        self.scenario_directory = path.parent
+                        self.save_notice = f"Saved {path.name}"
+                        self.picker = None
+                else:
+                    self.picker = None
+                    self.load_selected_scenario(path)
             return True
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_o and getattr(event, "mod", 0) & (
                 pygame.KMOD_CTRL | pygame.KMOD_GUI
             ):
                 self.open_scenario()
+            elif event.key == pygame.K_s and getattr(event, "mod", 0) & (
+                pygame.KMOD_CTRL | pygame.KMOD_GUI
+            ):
+                self.open_scenario(saving=True)
             elif event.key == pygame.K_ESCAPE and self.load_error is not None:
                 self.load_error = None
             elif event.key == pygame.K_ESCAPE:
@@ -181,6 +199,12 @@ class Application:
             and LOAD_SCENARIO_BUTTON.collidepoint(event.pos)
         ):
             self.open_scenario()
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and SAVE_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.open_scenario(saving=True)
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
             if event.button == 1:
                 self.dragging_object = False
@@ -322,6 +346,11 @@ def main(argv: list[str] | None = None) -> None:
                     application.scenario_name,
                     application.load_error,
                 )
+                if application.save_notice:
+                    screen.set_clip(WORLD)
+                    notice = font.render(application.save_notice, True, (79, 212, 184))
+                    screen.blit(notice, (WORLD.left + 16, WORLD.bottom - 28))
+                    screen.set_clip(None)
                 if application.picker is not None:
                     application.picker.draw(screen, font)
                 pygame.display.flip()

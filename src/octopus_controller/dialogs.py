@@ -18,7 +18,8 @@ VISIBLE_ROWS = FILE_LIST.height // ROW_HEIGHT
 class ScenarioPicker:
     """Browse directories and JSON files without taking over the application loop."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, *, saving: bool = False) -> None:
+        self.saving = saving
         self.directory = directory
         self.entries: list[Path] = []
         self.selected = 0
@@ -44,7 +45,9 @@ class ScenarioPicker:
         self.path_text = str(directory)
         self.selected = self.offset = 0
         self.error = ""
-        self.path_focus = self.select_all = False
+        self.path_focus = self.select_all = self.saving
+        if self.saving:
+            self.path_text = str(directory / "new-scenario.json")
 
     def activate(self) -> None:
         """Enter a directory or return a selected file for scenario validation."""
@@ -59,6 +62,15 @@ class ScenarioPicker:
         try:
             if path.is_dir():
                 self.browse(path)
+            elif self.saving:
+                if path.suffix.lower() != ".json":
+                    path = path.with_name(path.name + ".json")
+                if path.exists():
+                    self.error = "A file with that name exists. Choose a new filename."
+                elif not path.parent.is_dir():
+                    self.error = "Choose an existing folder for the new scenario."
+                else:
+                    self.result = path
             elif path.is_file():
                 self.result = path
             else:
@@ -126,7 +138,9 @@ class ScenarioPicker:
         shade.fill((0, 0, 0, 150))
         screen.blit(shade, (0, 0))
         pygame.draw.rect(screen, (22, 37, 51), PANEL, border_radius=10)
-        screen.blit(font.render("Load scenario", True, text), (220, 118))
+        screen.blit(
+            font.render("Save scenario" if self.saving else "Load scenario", True, text), (220, 118)
+        )
 
         def label(value: str, rect: pygame.Rect, colour=text, tail=False) -> None:
             # Clip names/paths without allowing them to cover adjacent controls.
@@ -145,7 +159,7 @@ class ScenarioPicker:
             (UP_BUTTON, "Up"),
             (HOME_BUTTON, "Home"),
             (CANCEL_BUTTON, "Cancel"),
-            (OPEN_BUTTON, "Open"),
+            (OPEN_BUTTON, "Save" if self.saving and self.path_focus else "Open"),
         ]:
             pygame.draw.rect(screen, (39, 61, 77), rect, border_radius=4)
             label(title, rect.inflate(-16, 0))
@@ -164,7 +178,12 @@ class ScenarioPicker:
             muted,
         )
         label(
-            self.error or "Tab to edit a path · Esc to cancel",
+            self.error
+            or (
+                "Enter a new filename above · Esc to cancel"
+                if self.saving
+                else "Tab to edit a path · Esc to cancel"
+            ),
             pygame.Rect(220, 601, 680, 26),
             (245, 160, 140) if self.error else muted,
         )
