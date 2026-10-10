@@ -13,6 +13,7 @@ from octopus_controller.organism import ARM_COUNT, CentralController
 from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario, save_scenario
 from octopus_controller.sensing import Environment, ObjectKind
 from octopus_controller.view import (
+    CLEAR_SCENARIO_BUTTON,
     HEADER_ICON_SIZE,
     LOAD_SCENARIO_BUTTON,
     SAVE_SCENARIO_BUTTON,
@@ -30,7 +31,7 @@ class Application:
     """Own UI state and translate user input into simulation commands."""
 
     def __init__(self, scenario: Scenario | None = None) -> None:
-        """Create a default experiment or a paused scenario without opening a display."""
+        """Create an empty setup or a paused scenario without opening a display."""
         self.scenario = scenario
         self.save_notice: str | None = None
         self.load_error: str | None = None
@@ -43,18 +44,17 @@ class Application:
         self.paused = False
         self.dragging = False
         self.accumulator = 0.0
-        self.environment = self._initial_environment()
+        self.environment = Environment()
         self.placement: ObjectKind | None = None
         self.selected_object: int | None = None
         self.dragging_object = False
         self.central.refresh_sensing(self.environment.objects)
-        if scenario is not None:
-            self.restart()
+        self.restart()
 
     @property
     def scenario_name(self) -> str:
-        """Give the current setup a label even for the built-in demonstration."""
-        return self.scenario.name if self.scenario is not None else "Original demonstration"
+        """Give the current setup a label even when no scenario is loaded."""
+        return self.scenario.name if self.scenario is not None else "Empty scenario"
 
     def open_scenario(self, *, saving: bool = False) -> None:
         """Open a modal picker without blocking the Pygame event loop."""
@@ -83,8 +83,8 @@ class Application:
     def restart(self) -> None:
         """Restore initial conditions; loaded scenarios always restart paused."""
         if self.scenario is None:
-            self.central = CentralController(BODY_CENTRE)
-            self.environment = self._initial_environment()
+            self.clear()
+            return
         else:
             self.central, self.environment = self.scenario.build()
             self.paused = True
@@ -96,16 +96,21 @@ class Application:
         self.accumulator = 0.0
         self.central.refresh_sensing(self.environment.objects)
 
-    def _initial_environment(self) -> Environment:
-        """Place food and a blocking circle so the default run demonstrates a detour."""
-        environment = Environment()
-        environment.add(self.central.arm(0).controller.target, ObjectKind.FOOD)
-        # Arm 3 starts to the right of the body. Put an obstacle across its
-        # curved approach, with a reachable target beyond it rather than inside it.
-        base = self.central.arm(2).controller.arm.base
-        self.central.assign_reach(2, (base[0] + 100, base[1]))
-        environment.add((base[0] + 60, base[1] + 67), ObjectKind.OBSTACLE)
-        return environment
+    def clear(self) -> None:
+        """Return to the empty startup setup with default, idle arms and no history."""
+        self.scenario = None
+        self.central = CentralController(BODY_CENTRE)
+        for arm in self.central.arms:
+            arm.idle()
+        self.environment = Environment()
+        self.paused = True
+        self.selected_index = 0
+        self.selected_object = None
+        self.placement = None
+        self.dragging = self.dragging_object = False
+        self.accumulator = 0.0
+        self.picker = None
+        self.load_error = self.save_notice = None
 
     @property
     def controller(self) -> ReachController:
@@ -205,6 +210,12 @@ class Application:
             and SAVE_SCENARIO_BUTTON.collidepoint(event.pos)
         ):
             self.open_scenario(saving=True)
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and CLEAR_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.clear()
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
             if event.button == 1:
                 self.dragging_object = False

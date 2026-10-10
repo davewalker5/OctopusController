@@ -9,8 +9,9 @@ from octopus_controller.sensing import ObjectKind, WorldObject
 
 HEADER_ICON_SIZE = (64, 64)
 SIDEBAR_TOP = 20
-LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 134, 26)
-SAVE_SCENARIO_BUTTON = pygame.Rect(952, SIDEBAR_TOP + 56, 134, 26)
+LOAD_SCENARIO_BUTTON = pygame.Rect(808, SIDEBAR_TOP + 56, 86, 26)
+SAVE_SCENARIO_BUTTON = pygame.Rect(904, SIDEBAR_TOP + 56, 86, 26)
+CLEAR_SCENARIO_BUTTON = pygame.Rect(1000, SIDEBAR_TOP + 56, 86, 26)
 CONTROL_STACK_BOTTOM = SIDEBAR_TOP + 740
 WINDOW_SIZE = (1120, CONTROL_STACK_BOTTOM + 20)
 # Share the lower edge with the final card so the world and controls stay aligned.
@@ -43,7 +44,7 @@ def draw_scene(
     selected_object: int | None = None,
     placement: ObjectKind | None = None,
     shortcuts_font: pygame.font.Font | None = None,
-    scenario_name: str = "Original demonstration",
+    scenario_name: str = "Empty scenario",
     load_error: str | None = None,
 ) -> None:
     """Draw eight arms, assignments, selected-arm settings and keyboard reference.
@@ -217,7 +218,7 @@ def draw_sidebar(
     paused: bool,
     font: pygame.font.Font,
     shortcuts_font: pygame.font.Font,
-    scenario_name: str = "Original demonstration",
+    scenario_name: str = "Empty scenario",
 ) -> None:
     """Group live arm status, selected settings and shortcuts into distinct cards.
 
@@ -239,8 +240,9 @@ def draw_sidebar(
         name += "…"
     screen.blit(font.render(name, True, TEXT), (808, SIDEBAR_TOP + 33))
     for rect, text in [
-        (LOAD_SCENARIO_BUTTON, "Load scenario…"),
-        (SAVE_SCENARIO_BUTTON, "Save scenario…"),
+        (LOAD_SCENARIO_BUTTON, "Load"),
+        (SAVE_SCENARIO_BUTTON, "Save"),
+        (CLEAR_SCENARIO_BUTTON, "Clear"),
     ]:
         pygame.draw.rect(screen, (39, 61, 77), rect, border_radius=5)
         pygame.draw.rect(screen, ACCENT, rect, width=1, border_radius=5)

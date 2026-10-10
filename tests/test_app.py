@@ -24,9 +24,9 @@ def press(application: Application, key: int) -> bool:
     return application.handle_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
-def test_pause_step_resume_and_reset() -> None:
+def test_pause_step_resume_and_reset(make_reaching_application) -> None:
     """Pause freezes motion, stepping advances once and reset restores the pose."""
-    application = Application()
+    application = make_reaching_application()
     original = application.controller.arm.points
     press(application, pygame.K_SPACE)
     application.advance(0.1)
@@ -53,9 +53,9 @@ def test_drag_target_and_release() -> None:
     assert application.controller.target == (WORLD.left, WORLD.bottom - 1)
 
 
-def test_parameter_changes_and_defaults() -> None:
+def test_parameter_changes_and_defaults(make_reaching_application) -> None:
     """Geometry resets preserve the target; speed changes preserve the pose."""
-    application = Application()
+    application = make_reaching_application()
     application.controller.set_target((420, 200))
     press(application, pygame.K_RIGHTBRACKET)
     assert application.controller.arm.parameters.segment_count == 21
@@ -74,9 +74,9 @@ def test_parameter_changes_and_defaults() -> None:
     assert application.controller.arm.parameters.segment_count == 20
 
 
-def test_fixed_steps_do_not_depend_on_render_frequency() -> None:
+def test_fixed_steps_do_not_depend_on_render_frequency(make_reaching_application) -> None:
     """Different frame groupings produce the same one-second simulation."""
-    slow, fast = Application(), Application()
+    slow, fast = make_reaching_application(), make_reaching_application()
     for _ in range(30):
         slow.advance(1 / 30)
     for _ in range(120):
@@ -104,9 +104,9 @@ def test_renderer_and_packaged_icon() -> None:
         pygame.quit()
 
 
-def test_default_experiment_captures_food() -> None:
+def test_assigned_experiment_captures_food(make_reaching_application) -> None:
     """The opening food is captured once enough adjacent sensors establish a grip."""
-    application = Application()
+    application = make_reaching_application()
     for _ in range(600):
         application.advance(1 / 60)
     assert application.central.arm(0).grip is not None
@@ -150,9 +150,9 @@ def test_selection_assignments_and_drag_do_not_leak_between_arms() -> None:
     assert application.controller.target == (450, 300)
 
 
-def test_paused_step_updates_all_and_selected_parameters_only() -> None:
+def test_paused_step_updates_all_and_selected_parameters_only(make_reaching_application) -> None:
     """Pause and step are global; changing geometry is local to the selected arm."""
-    application = Application()
+    application = make_reaching_application()
     press(application, pygame.K_SPACE)
     before = [arm.controller.arm.points for arm in application.central.arms]
     application.advance(0.1)
@@ -178,7 +178,6 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     from octopus_controller.sensing import ObjectKind
 
     application = Application()
-    press(application, pygame.K_SPACE)
     before = application.controller.arm.points
     target = application.controller.target
     position = tuple(round(value) for value in before[10])
@@ -194,7 +193,7 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     assert not application.central.arm(0).contacts
     assert application.controller.arm.points == before
     press(application, pygame.K_DELETE)
-    assert len(application.environment.objects) == 2
+    assert len(application.environment.objects) == 0
     press(application, pygame.K_d)
     assert application.selected_object is None
     assert application.placement is None
@@ -209,12 +208,12 @@ def test_placement_tool_can_be_cancelled() -> None:
     assert application.placement is None
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(600, 500)))
     assert application.controller.target == (600, 500)
-    assert len(application.environment.objects) == 2
+    assert len(application.environment.objects) == 0
 
 
-def test_default_obstacle_demonstrates_avoidance_and_reaches() -> None:
-    """The opening obstacle scene produces a visible detour without user setup."""
-    application = Application()
+def test_obstacle_demonstrates_avoidance_and_reaches(make_reaching_application) -> None:
+    """An explicitly populated scene produces a visible detour."""
+    application = make_reaching_application()
     saw_avoidance = False
     for _ in range(600):
         application.advance(1 / 60)
@@ -226,9 +225,9 @@ def test_default_obstacle_demonstrates_avoidance_and_reaches() -> None:
     )
 
 
-def test_grasp_controls_release_and_paused_delete() -> None:
+def test_grasp_controls_release_and_paused_delete(make_reaching_application) -> None:
     """Keyboard carry controls and scene editing preserve consistent attachment state."""
-    application = Application()
+    application = make_reaching_application()
     for _ in range(120):
         application.advance(1 / 60)
     arm = application.central.arm(0)
@@ -315,13 +314,13 @@ def test_main_rejects_bad_scenario_before_display(tmp_path: Path, capsys) -> Non
     assert not pygame.get_init()
 
 
-def test_picker_load_cancel_and_invalid_file(tmp_path):
+def test_picker_load_cancel_and_invalid_file(make_reaching_application, tmp_path):
     """Modal input freezes movement, preserves cancellation and loads transactionally."""
     from octopus_controller.view import LOAD_SCENARIO_BUTTON
 
     path = tmp_path / "reef.json"
     path.write_text('{"version": 1, "name": "New reef"}')
-    application = Application()
+    application = make_reaching_application()
     application.scenario_directory = tmp_path
     application.advance(0.1)
     central = application.central
@@ -446,4 +445,67 @@ def test_failed_save_stays_in_picker_and_cancel_is_safe(monkeypatch, tmp_path):
     assert application.picker.error == "Read-only folder"
     assert not list(tmp_path.iterdir())
     press(application, pygame.K_ESCAPE)
-    assert application.picker is None and not application.paused
+    assert application.picker is None and application.paused
+
+
+def test_clear_button_matches_empty_startup_and_forgets_loaded_setup():
+    """Clear resets geometry, assignments, objects, playback, history and UI state."""
+    from octopus_controller.organism import DEFAULT_PARAMETERS
+    from octopus_controller.scenario import parse_scenario
+    from octopus_controller.sensing import ObjectKind
+    from octopus_controller.view import CLEAR_SCENARIO_BUTTON
+
+    application = Application(
+        parse_scenario(
+            {
+                "version": 1,
+                "name": "Populated",
+                "body": [300, 400],
+                "defaults": {"segment_count": 25},
+                "food": [{"position": [300, 250]}],
+                "obstacles": [{"position": [500, 500]}],
+                "arms": [{"number": 1, "target": {"position": [300, 250]}}],
+            }
+        )
+    )
+    press(application, pygame.K_SPACE)
+    application.advance(0.1)
+    application.central.capture_count = 2
+    application.selected_index = 4
+    application.selected_object = 1
+    application.placement = ObjectKind.FOOD
+    application.dragging = application.dragging_object = True
+    application.load_error = "old error"
+    application.save_notice = "old save"
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=CLEAR_SCENARIO_BUTTON.center)
+    )
+    startup = Application()
+    assert application.scenario is None
+    assert application.scenario_name == startup.scenario_name == "Empty scenario"
+    assert application.central.centre == startup.central.centre
+    assert application.environment.objects == startup.environment.objects == ()
+    assert application.paused and startup.paused
+    assert application.central.capture_count == 0
+    assert not application.central.capture_reports
+    assert application.central.simulation_seconds == application.accumulator == 0
+    assert application.selected_index == 0 and application.selected_object is None
+    assert application.placement is application.picker is None
+    assert not application.dragging and not application.dragging_object
+    assert application.load_error is application.save_notice is None
+    for arm, initial in zip(application.central.arms, startup.central.arms):
+        assert arm.controller.arm.parameters == DEFAULT_PARAMETERS
+        assert arm.controller.arm.points == initial.controller.arm.points
+        assert not arm.active and arm.grip is None and not arm.contacts
+    press(application, pygame.K_d)
+    assert not application.environment.objects and application.scenario is None
+    assert all(not arm.active for arm in application.central.arms)
+
+
+def test_empty_startup_stays_in_default_posture_when_played():
+    application = Application()
+    before = [a.controller.arm.points for a in application.central.arms]
+    press(application, pygame.K_SPACE)
+    application.advance(0.1)
+    assert [a.controller.arm.points for a in application.central.arms] == before
+    assert application.environment.objects == ()
