@@ -4,7 +4,6 @@ from math import hypot, pi, sqrt
 
 import pytest
 
-from octopus_controller.app import Application
 from octopus_controller.avoidance import safe_motion
 from octopus_controller.grasping import GRASP_CONTACT_SECONDS, Grip, grasp_candidate
 from octopus_controller.organism import ArmState, CentralController, ControlledArm
@@ -91,9 +90,9 @@ def test_two_arms_cannot_claim_one_object() -> None:
     assert central.capture_count == 1
 
 
-def test_carry_and_retract_keep_attachment_and_report_count() -> None:
+def test_carry_and_retract_keep_attachment_and_report_count(make_reaching_application) -> None:
     """The opening food can be moved and brought home while staying attached."""
-    application = Application()
+    application = make_reaching_application()
     central, scene = application.central, application.environment
     arm = central.arm(0)
     for _ in range(120):
@@ -186,9 +185,9 @@ def test_invalid_step_does_not_change_time_or_scene(duration: float) -> None:
     assert scene.objects == before
 
 
-def test_blocked_carry_keeps_object_and_grip_consistent() -> None:
+def test_blocked_carry_keeps_object_and_grip_consistent(make_reaching_application) -> None:
     """A destination inside an obstacle cannot detach or relocate the held food."""
-    application = Application()
+    application = make_reaching_application()
     for _ in range(120):
         application.advance(1 / 60)
     arm = application.central.arm(0)

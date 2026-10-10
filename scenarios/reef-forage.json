@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "name": "Slow reef forage \u2014 eight arms",
+  "body": [
+    400,
+    425
+  ],
+  "defaults": {
+    "segment_count": 20,
+    "segment_length": 12,
+    "maximum_bend_degrees": 60,
+    "turning_speed_degrees": 0.1
+  },
+  "food": [
+    {
+      "id": "meal-1",
+      "position": [
+        346.81,
+        221.04
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-2",
+      "position": [
+        506.61,
+        243.16
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-3",
+      "position": [
+        603.96,
+        371.81
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-4",
+      "position": [
+        581.84,
+        531.61
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-5",
+      "position": [
+        453.19,
+        628.96
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-6",
+      "position": [
+        293.39,
+        606.84
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-7",
+      "position": [
+        196.04,
+        478.19
+      ],
+      "radius": 14
+    },
+    {
+      "id": "meal-8",
+      "position": [
+        218.16,
+        318.39
+      ],
+      "radius": 14
+    }
+  ],
+  "obstacles": [
+    {
+      "position": [
+        548.69,
+        288.32
+      ],
+      "radius": 10
+    },
+    {
+      "position": [
+        530.98,
+        519.46
+      ],
+      "radius": 10
+    },
+    {
+      "position": [
+        251.31,
+        561.68
+      ],
+      "radius": 10
+    },
+    {
+      "position": [
+        269.02,
+        330.54
+      ],
+      "radius": 10
+    }
+  ],
+  "arms": [
+    {
+      "number": 1,
+      "parameters": {
+        "turning_speed_degrees": 10
+      },
+      "target": {
+        "food": "meal-1"
+      }
+    },
+    {
+      "number": 2,
+      "parameters": {
+        "turning_speed_degrees": 8
+      },
+      "target": {
+        "food": "meal-2"
+      }
+    },
+    {
+      "number": 3,
+      "parameters": {
+        "turning_speed_degrees": 7
+      },
+      "target": {
+        "food": "meal-3"
+      }
+    },
+    {
+      "number": 4,
+      "parameters": {
+        "turning_speed_degrees": 6
+      },
+      "target": {
+        "food": "meal-4"
+      }
+    },
+    {
+      "number": 5,
+      "parameters": {
+        "turning_speed_degrees": 4.5
+      },
+      "target": {
+        "food": "meal-5"
+      }
+    },
+    {
+      "number": 6,
+      "parameters": {
+        "turning_speed_degrees": 3.5
+      },
+      "target": {
+        "food": "meal-6"
+      }
+    },
+    {
+      "number": 7,
+      "parameters": {
+        "turning_speed_degrees": 2
+      },
+      "target": {
+        "food": "meal-7"
+      }
+    },
+    {
+      "number": 8,
+      "parameters": {
+        "turning_speed_degrees": 2.5
+      },
+      "target": {
+        "food": "meal-8"
+      }
+    }
+  ]
+}

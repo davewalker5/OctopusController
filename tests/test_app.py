@@ -24,9 +24,9 @@ def press(application: Application, key: int) -> bool:
     return application.handle_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
-def test_pause_step_resume_and_reset() -> None:
+def test_pause_step_resume_and_reset(make_reaching_application) -> None:
     """Pause freezes motion, stepping advances once and reset restores the pose."""
-    application = Application()
+    application = make_reaching_application()
     original = application.controller.arm.points
     press(application, pygame.K_SPACE)
     application.advance(0.1)
@@ -53,9 +53,9 @@ def test_drag_target_and_release() -> None:
     assert application.controller.target == (WORLD.left, WORLD.bottom - 1)
 
 
-def test_parameter_changes_and_defaults() -> None:
+def test_parameter_changes_and_defaults(make_reaching_application) -> None:
     """Geometry resets preserve the target; speed changes preserve the pose."""
-    application = Application()
+    application = make_reaching_application()
     application.controller.set_target((420, 200))
     press(application, pygame.K_RIGHTBRACKET)
     assert application.controller.arm.parameters.segment_count == 21
@@ -74,9 +74,9 @@ def test_parameter_changes_and_defaults() -> None:
     assert application.controller.arm.parameters.segment_count == 20
 
 
-def test_fixed_steps_do_not_depend_on_render_frequency() -> None:
+def test_fixed_steps_do_not_depend_on_render_frequency(make_reaching_application) -> None:
     """Different frame groupings produce the same one-second simulation."""
-    slow, fast = Application(), Application()
+    slow, fast = make_reaching_application(), make_reaching_application()
     for _ in range(30):
         slow.advance(1 / 30)
     for _ in range(120):
@@ -104,9 +104,9 @@ def test_renderer_and_packaged_icon() -> None:
         pygame.quit()
 
 
-def test_default_experiment_captures_food() -> None:
+def test_assigned_experiment_captures_food(make_reaching_application) -> None:
     """The opening food is captured once enough adjacent sensors establish a grip."""
-    application = Application()
+    application = make_reaching_application()
     for _ in range(600):
         application.advance(1 / 60)
     assert application.central.arm(0).grip is not None
@@ -150,9 +150,9 @@ def test_selection_assignments_and_drag_do_not_leak_between_arms() -> None:
     assert application.controller.target == (450, 300)
 
 
-def test_paused_step_updates_all_and_selected_parameters_only() -> None:
+def test_paused_step_updates_all_and_selected_parameters_only(make_reaching_application) -> None:
     """Pause and step are global; changing geometry is local to the selected arm."""
-    application = Application()
+    application = make_reaching_application()
     press(application, pygame.K_SPACE)
     before = [arm.controller.arm.points for arm in application.central.arms]
     application.advance(0.1)
@@ -178,7 +178,6 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     from octopus_controller.sensing import ObjectKind
 
     application = Application()
-    press(application, pygame.K_SPACE)
     before = application.controller.arm.points
     target = application.controller.target
     position = tuple(round(value) for value in before[10])
@@ -194,7 +193,7 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     assert not application.central.arm(0).contacts
     assert application.controller.arm.points == before
     press(application, pygame.K_DELETE)
-    assert len(application.environment.objects) == 2
+    assert len(application.environment.objects) == 0
     press(application, pygame.K_d)
     assert application.selected_object is None
     assert application.placement is None
@@ -209,12 +208,12 @@ def test_placement_tool_can_be_cancelled() -> None:
     assert application.placement is None
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(600, 500)))
     assert application.controller.target == (600, 500)
-    assert len(application.environment.objects) == 2
+    assert len(application.environment.objects) == 0
 
 
-def test_default_obstacle_demonstrates_avoidance_and_reaches() -> None:
-    """The opening obstacle scene produces a visible detour without user setup."""
-    application = Application()
+def test_obstacle_demonstrates_avoidance_and_reaches(make_reaching_application) -> None:
+    """An explicitly populated scene produces a visible detour."""
+    application = make_reaching_application()
     saw_avoidance = False
     for _ in range(600):
         application.advance(1 / 60)
@@ -226,9 +225,9 @@ def test_default_obstacle_demonstrates_avoidance_and_reaches() -> None:
     )
 
 
-def test_grasp_controls_release_and_paused_delete() -> None:
+def test_grasp_controls_release_and_paused_delete(make_reaching_application) -> None:
     """Keyboard carry controls and scene editing preserve consistent attachment state."""
-    application = Application()
+    application = make_reaching_application()
     for _ in range(120):
         application.advance(1 / 60)
     arm = application.central.arm(0)
@@ -313,3 +312,253 @@ def test_main_rejects_bad_scenario_before_display(tmp_path: Path, capsys) -> Non
     assert error.value.code == 2
     assert "Arm 3 references unknown food" in capsys.readouterr().err
     assert not pygame.get_init()
+
+
+def test_picker_load_cancel_and_invalid_file(make_reaching_application, tmp_path):
+    """Modal input freezes movement, preserves cancellation and loads transactionally."""
+    from octopus_controller.view import LOAD_SCENARIO_BUTTON
+
+    path = tmp_path / "reef.json"
+    path.write_text('{"version": 1, "name": "New reef"}')
+    application = make_reaching_application()
+    application.scenario_directory = tmp_path
+    application.advance(0.1)
+    central = application.central
+    before = central.simulation_seconds
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=LOAD_SCENARIO_BUTTON.center)
+    )
+    assert application.picker is not None
+    application.advance(30)
+    assert central.simulation_seconds == before
+    press(application, pygame.K_SPACE)
+    assert not application.paused
+    assert press(application, pygame.K_ESCAPE)
+    assert application.picker is None and application.central is central
+    application.open_scenario()
+    press(application, pygame.K_RETURN)
+    assert application.picker is None
+    assert application.scenario_name == "New reef" and application.paused
+    assert application.central.simulation_seconds == 0
+    assert application.central.capture_count == 0
+    assert application.selected_index == 0
+    press(application, pygame.K_d)
+    assert application.scenario_name == "New reef"
+    central = application.central
+    path.write_text('{"version": 99}')
+    application.open_scenario()
+    press(application, pygame.K_RETURN)
+    assert application.central is central
+    assert application.load_error
+    assert press(application, pygame.K_ESCAPE)
+    assert application.load_error is None
+
+
+@pytest.mark.parametrize("modifier", [pygame.KMOD_CTRL, pygame.KMOD_GUI])
+def test_picker_shortcut_and_quit(modifier):
+    """Opening the picker cannot also place an obstacle, and Quit stays responsive."""
+    application = Application()
+    application.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o, mod=modifier))
+    assert application.picker is not None and application.placement is None
+    assert not application.handle_event(pygame.event.Event(pygame.QUIT))
+
+
+def test_main_renders_picker_and_loads_without_blocking(monkeypatch, tmp_path):
+    """The real loop renders multiple picker frames, then loads and updates its caption."""
+    from octopus_controller import app
+
+    path = tmp_path / "reef.json"
+    path.write_text('{"version": 1, "name": "Live reef"}')
+    monkeypatch.chdir(tmp_path)
+    batches = iter(
+        [
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_o, mod=pygame.KMOD_CTRL)],
+            [],
+            [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
+            [pygame.event.Event(pygame.QUIT)],
+        ]
+    )
+    monkeypatch.setattr(pygame.event, "get", lambda: next(batches))
+    frames, captions = [], []
+    real_draw = app.draw_scene
+
+    def draw(*args):
+        frames.append(args)
+        real_draw(*args)
+
+    monkeypatch.setattr(app, "draw_scene", draw)
+    monkeypatch.setattr(pygame.display, "set_caption", captions.append)
+    app.main([])
+    assert len(frames) == 3
+    assert frames[0][1].simulation_seconds == 0
+    assert frames[-1][-2] == "Live reef"
+    assert frames[-1][2] is True
+    assert captions[-1].endswith("Live reef")
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_save_current_scene_keeps_live_state_and_restart(tmp_path, paused):
+    from octopus_controller.dialogs import OPEN_BUTTON
+    from octopus_controller.scenario import load_scenario
+    from octopus_controller.view import SAVE_SCENARIO_BUTTON
+
+    application = Application()
+    application.scenario_directory = tmp_path
+    application.paused = paused
+    application.selected_index = 4
+    central = application.central
+    central.assign_reach(4, (350, 650))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SAVE_SCENARIO_BUTTON.center)
+    )
+    assert application.picker.saving
+    application.advance(10)
+    assert central.simulation_seconds == 0
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="snapshot.json"))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=OPEN_BUTTON.center)
+    )
+    assert application.picker is None
+    assert application.central is central and application.paused == paused
+    assert application.selected_index == 4 and application.scenario is None
+    assert application.save_notice == "Saved snapshot.json"
+    assert load_scenario(tmp_path / "snapshot.json").arms[4].target == (350, 650)
+
+
+def test_failed_save_stays_in_picker_and_cancel_is_safe(monkeypatch, tmp_path):
+    from octopus_controller import app
+
+    application = Application()
+    application.scenario_directory = tmp_path
+
+    def fail(*args, **kwargs):
+        raise PermissionError("Read-only folder")
+
+    monkeypatch.setattr(app, "save_scenario", fail)
+    application.handle_event(
+        pygame.event.Event(pygame.KEYDOWN, key=pygame.K_s, mod=pygame.KMOD_GUI)
+    )
+    assert application.picker.saving
+    press(application, pygame.K_RETURN)
+    assert application.picker is not None
+    assert application.picker.result is None
+    assert application.picker.error == "Read-only folder"
+    assert not list(tmp_path.iterdir())
+    press(application, pygame.K_ESCAPE)
+    assert application.picker is None and application.paused
+
+
+def test_clear_button_matches_empty_startup_and_forgets_loaded_setup():
+    """Clear resets geometry, assignments, objects, playback, history and UI state."""
+    from octopus_controller.organism import DEFAULT_PARAMETERS
+    from octopus_controller.scenario import parse_scenario
+    from octopus_controller.sensing import ObjectKind
+    from octopus_controller.view import CLEAR_SCENARIO_BUTTON
+
+    application = Application(
+        parse_scenario(
+            {
+                "version": 1,
+                "name": "Populated",
+                "body": [300, 400],
+                "defaults": {"segment_count": 25},
+                "food": [{"position": [300, 250]}],
+                "obstacles": [{"position": [500, 500]}],
+                "arms": [{"number": 1, "target": {"position": [300, 250]}}],
+            }
+        )
+    )
+    press(application, pygame.K_SPACE)
+    application.advance(0.1)
+    application.central.capture_count = 2
+    application.selected_index = 4
+    application.selected_object = 1
+    application.placement = ObjectKind.FOOD
+    application.dragging = application.dragging_object = True
+    application.load_error = "old error"
+    application.save_notice = "old save"
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=CLEAR_SCENARIO_BUTTON.center)
+    )
+    startup = Application()
+    assert application.scenario is None
+    assert application.scenario_name == startup.scenario_name == "Empty scenario"
+    assert application.central.centre == startup.central.centre
+    assert application.environment.objects == startup.environment.objects == ()
+    assert application.paused and startup.paused
+    assert application.central.capture_count == 0
+    assert not application.central.capture_reports
+    assert application.central.simulation_seconds == application.accumulator == 0
+    assert application.selected_index == 0 and application.selected_object is None
+    assert application.placement is application.picker is None
+    assert not application.dragging and not application.dragging_object
+    assert application.load_error is application.save_notice is None
+    for arm, initial in zip(application.central.arms, startup.central.arms):
+        assert arm.controller.arm.parameters == DEFAULT_PARAMETERS
+        assert arm.controller.arm.points == initial.controller.arm.points
+        assert not arm.active and arm.grip is None and not arm.contacts
+    press(application, pygame.K_d)
+    assert not application.environment.objects and application.scenario is None
+    assert all(not arm.active for arm in application.central.arms)
+
+
+def test_empty_startup_stays_in_default_posture_when_played():
+    application = Application()
+    before = [a.controller.arm.points for a in application.central.arms]
+    press(application, pygame.K_SPACE)
+    application.advance(0.1)
+    assert [a.controller.arm.points for a in application.central.arms] == before
+    assert application.environment.objects == ()
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_rename_save_reload_and_clear(tmp_path, paused):
+    from octopus_controller.dialogs import OPEN_BUTTON
+    from octopus_controller.scenario import load_scenario
+    from octopus_controller.view import SCENARIO_NAME_BUTTON
+
+    application = Application()
+    application.paused = paused
+    application.scenario_directory = tmp_path
+    central = application.central
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SCENARIO_NAME_BUTTON.center)
+    )
+    assert application.name_prompt.text == "Empty scenario"
+    application.advance(30)
+    assert central.simulation_seconds == 0
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="My reef 🐙"))
+    press(application, pygame.K_RETURN)
+    assert application.scenario_name == "My reef 🐙"
+    assert application.name_prompt is None
+    assert application.paused == paused and application.central is central
+    press(application, pygame.K_d)
+    assert application.scenario_name == "My reef 🐙"
+    application.open_scenario(saving=True)
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="different-filename.json"))
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=OPEN_BUTTON.center)
+    )
+    path = tmp_path / "different-filename.json"
+    assert load_scenario(path).name == "My reef 🐙"
+    application.clear()
+    assert application.scenario_name == "Empty scenario"
+    application.load_selected_scenario(path)
+    assert application.scenario_name == "My reef 🐙"
+
+
+def test_rename_blank_cancel_and_quit():
+    from octopus_controller.view import SCENARIO_NAME_BUTTON
+
+    application = Application()
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=SCENARIO_NAME_BUTTON.center)
+    )
+    application.handle_event(pygame.event.Event(pygame.TEXTINPUT, text="   "))
+    press(application, pygame.K_RETURN)
+    assert application.name_prompt.error
+    assert application.scenario_name == "Empty scenario"
+    assert not application.handle_event(pygame.event.Event(pygame.QUIT))
+    assert press(application, pygame.K_ESCAPE)
+    assert application.name_prompt is None
+    assert application.scenario_name == "Empty scenario"

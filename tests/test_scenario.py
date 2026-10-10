@@ -1,7 +1,7 @@
 """Scenario validation and repeatable playback through the application's controls."""
 
 import json
-from math import pi
+from math import pi, radians
 from pathlib import Path
 
 import pytest
@@ -33,7 +33,7 @@ def test_example_resolves_parameters_objects_and_independent_targets() -> None:
     assert central.arm(2).controller.arm.parameters.segment_count == 24
     assert central.arm(1).controller.arm.parameters.segment_count == 20
     assert central.arm(2).controller.arm.parameters.maximum_bend == pytest.approx(pi / 3)
-    assert central.arm(2).controller.arm.parameters.turning_speed == pytest.approx(pi / 2)
+    assert central.arm(2).controller.arm.parameters.turning_speed == pytest.approx(radians(14))
     assert [obj.radius for obj in environment.objects] == [12, 12, 25]
     environment.move(1, (20, 20))
     assert central.arm(0).controller.target == (400, 240)
@@ -113,3 +113,71 @@ def test_parser_does_not_retain_mutable_input() -> None:
     data["food"][0]["position"][0] = 10
     assert scenario.body == (400, 460)
     assert scenario.arms[0].target == (400, 240)
+
+
+def test_save_round_trip_current_supported_state(tmp_path):
+    """Export live edits, idle state and payload goals through the version-1 loader."""
+    from dataclasses import replace
+    from math import radians
+
+    from octopus_controller.grasping import Grip
+    from octopus_controller.organism import CentralController
+    from octopus_controller.scenario import load_scenario, save_scenario
+    from octopus_controller.sensing import Environment, ObjectKind
+
+    central = CentralController((350, 420))
+    environment = Environment()
+    identifier = environment.add((500, 300), ObjectKind.FOOD, 17)
+    environment.add((275, 500), ObjectKind.OBSTACLE, 23)
+    environment.move(identifier, (510, 310))
+    arm = central.arm(0)
+    arm.controller.arm.parameters = replace(
+        arm.controller.arm.parameters,
+        segment_length=10.25,
+        turning_speed=radians(0.07),
+        maximum_bend=radians(75),
+    )
+    arm.grip = Grip.attach(environment.objects[0], 3, arm.controller.arm.points)
+    arm.assign_reach((360, 370))
+    arm.controller.set_target((999, 999))  # Internal tip correction is not the payload goal.
+    central.arm(1).idle()
+    central.arm(2).assign_reach((270, 310))
+    path = tmp_path / "Saved reef.json"
+    before = [a.controller.arm.angles.copy() for a in central.arms]
+    save_scenario(path, central, environment)
+    scenario = load_scenario(path)
+    assert scenario.name == "Saved reef"
+    assert scenario.body == central.centre
+    assert [(o.centre, o.radius, o.kind) for o in scenario.objects] == [
+        (o.centre, o.radius, o.kind) for o in environment.objects
+    ]
+    assert scenario.arms[0].target == (360, 370)
+    assert scenario.arms[1].target is None
+    assert scenario.arms[2].target == (270, 310)
+    for saved, live in zip(scenario.arms, central.arms):
+        assert saved.parameters.segment_count == live.controller.arm.parameters.segment_count
+        assert saved.parameters.segment_length == live.controller.arm.parameters.segment_length
+        assert saved.parameters.maximum_bend == pytest.approx(
+            live.controller.arm.parameters.maximum_bend
+        )
+        assert saved.parameters.turning_speed == pytest.approx(
+            live.controller.arm.parameters.turning_speed
+        )
+    rebuilt, _ = scenario.build()
+    assert all(a.grip is None for a in rebuilt.arms)
+    assert rebuilt.capture_count == 0
+    assert [a.controller.arm.angles for a in central.arms] == before
+    assert arm.grip is not None
+
+
+def test_save_refuses_overwrite(tmp_path):
+    """Existing bytes survive even when a file appears after picker validation."""
+    from octopus_controller.app import Application
+    from octopus_controller.scenario import save_scenario
+
+    application = Application()
+    path = tmp_path / "existing.json"
+    path.write_text("keep this")
+    with pytest.raises(FileExistsError):
+        save_scenario(path, application.central, application.environment)
+    assert path.read_text() == "keep this"

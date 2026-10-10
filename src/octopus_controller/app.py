@@ -7,11 +7,21 @@ from pathlib import Path
 
 import pygame
 
+from octopus_controller.dialogs import ScenarioNamePrompt, ScenarioPicker
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
-from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario
+from octopus_controller.scenario import DEFAULT_BODY, Scenario, load_scenario, save_scenario
 from octopus_controller.sensing import Environment, ObjectKind
-from octopus_controller.view import HEADER_ICON_SIZE, WINDOW_SIZE, WORLD, draw_scene
+from octopus_controller.view import (
+    CLEAR_SCENARIO_BUTTON,
+    HEADER_ICON_SIZE,
+    LOAD_SCENARIO_BUTTON,
+    SAVE_SCENARIO_BUTTON,
+    SCENARIO_NAME_BUTTON,
+    WINDOW_SIZE,
+    WORLD,
+    draw_scene,
+)
 
 SIMULATION_STEP = 1 / 120
 MAXIMUM_FRAME_TIME = 0.1
@@ -22,26 +32,67 @@ class Application:
     """Own UI state and translate user input into simulation commands."""
 
     def __init__(self, scenario: Scenario | None = None) -> None:
-        """Create a default experiment or a paused scenario without opening a display."""
+        """Create an empty setup or a paused scenario without opening a display."""
         self.scenario = scenario
+        self.name_override: str | None = None
+        self.name_prompt: ScenarioNamePrompt | None = None
+        self.save_notice: str | None = None
+        self.load_error: str | None = None
+        self.scenario_directory = Path.cwd() / "scenarios"
+        if not self.scenario_directory.is_dir():
+            self.scenario_directory = Path.cwd()
+        self.picker: ScenarioPicker | None = None
         self.central = CentralController(BODY_CENTRE)
         self.selected_index = 0
         self.paused = False
         self.dragging = False
         self.accumulator = 0.0
-        self.environment = self._initial_environment()
+        self.environment = Environment()
         self.placement: ObjectKind | None = None
         self.selected_object: int | None = None
         self.dragging_object = False
         self.central.refresh_sensing(self.environment.objects)
-        if scenario is not None:
-            self.restart()
+        self.restart()
+
+    @property
+    def scenario_name(self) -> str:
+        """Give the current setup a label even when no scenario is loaded."""
+        return self.name_override or (
+            self.scenario.name if self.scenario is not None else "Empty scenario"
+        )
+
+    def open_scenario(self, *, saving: bool = False) -> None:
+        """Open a modal picker without blocking the Pygame event loop."""
+        self.dragging = self.dragging_object = False
+        self.load_error = None
+        self.save_notice = None
+        self.picker = ScenarioPicker(self.scenario_directory, saving=saving)
+
+    def load_selected_scenario(self, path: Path) -> None:
+        """Validate and build before replacing the current scene or restart setup."""
+        try:
+            scenario = load_scenario(path)
+            central, environment = scenario.build()
+        except ValueError as error:
+            self.load_error = str(error)
+            return
+        self.scenario = scenario
+        self.name_override = None
+        self.central, self.environment = central, environment
+        self.scenario_directory = path.parent
+        self.paused = True
+        self.selected_index = 0
+        self.selected_object = None
+        self.placement = None
+        self.accumulator = 0.0
 
     def restart(self) -> None:
         """Restore initial conditions; loaded scenarios always restart paused."""
         if self.scenario is None:
-            self.central = CentralController(BODY_CENTRE)
-            self.environment = self._initial_environment()
+            name = self.name_override
+            self.clear()
+            self.name_override = name
+            return
         else:
             self.central, self.environment = self.scenario.build()
             self.paused = True
@@ -53,16 +104,23 @@ class Application:
         self.accumulator = 0.0
         self.central.refresh_sensing(self.environment.objects)
 
-    def _initial_environment(self) -> Environment:
-        """Place food and a blocking circle so the default run demonstrates a detour."""
-        environment = Environment()
-        environment.add(self.central.arm(0).controller.target, ObjectKind.FOOD)
-        # Arm 3 starts to the right of the body. Put an obstacle across its
-        # curved approach, with a reachable target beyond it rather than inside it.
-        base = self.central.arm(2).controller.arm.base
-        self.central.assign_reach(2, (base[0] + 100, base[1]))
-        environment.add((base[0] + 60, base[1] + 67), ObjectKind.OBSTACLE)
-        return environment
+    def clear(self) -> None:
+        """Return to the empty startup setup with default, idle arms and no history."""
+        self.scenario = None
+        self.name_override = None
+        self.name_prompt = None
+        self.central = CentralController(BODY_CENTRE)
+        for arm in self.central.arms:
+            arm.idle()
+        self.environment = Environment()
+        self.paused = True
+        self.selected_index = 0
+        self.selected_object = None
+        self.placement = None
+        self.dragging = self.dragging_object = False
+        self.accumulator = 0.0
+        self.picker = None
+        self.load_error = self.save_notice = None
 
     @property
     def controller(self) -> ReachController:
@@ -77,10 +135,48 @@ class Application:
         """
         if event.type == pygame.QUIT:
             return False
+        if self.name_prompt is not None:
+            self.name_prompt.handle_event(event)
+            if self.name_prompt.cancelled:
+                self.name_prompt = None
+            elif self.name_prompt.result is not None:
+                self.name_override = self.name_prompt.result
+                self.name_prompt = None
+            return True
+        if self.picker is not None:
+            self.picker.handle_event(event)
+            if self.picker.cancelled:
+                self.picker = None
+            elif self.picker.result is not None:
+                path = self.picker.result
+                if self.picker.saving:
+                    try:
+                        save_scenario(path, self.central, self.environment, name=self.scenario_name)
+                    except (OSError, ValueError) as error:
+                        self.picker.error = str(error)
+                        self.picker.result = None
+                    else:
+                        self.scenario_directory = path.parent
+                        self.save_notice = f"Saved {path.name}"
+                        self.picker = None
+                else:
+                    self.picker = None
+                    self.load_selected_scenario(path)
+            return True
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_o and getattr(event, "mod", 0) & (
+                pygame.KMOD_CTRL | pygame.KMOD_GUI
+            ):
+                self.open_scenario()
+            elif event.key == pygame.K_s and getattr(event, "mod", 0) & (
+                pygame.KMOD_CTRL | pygame.KMOD_GUI
+            ):
+                self.open_scenario(saving=True)
+            elif event.key == pygame.K_ESCAPE and self.load_error is not None:
+                self.load_error = None
+            elif event.key == pygame.K_ESCAPE:
                 return False
-            if pygame.K_1 <= event.key <= pygame.K_8 or event.key == pygame.K_TAB:
+            elif pygame.K_1 <= event.key <= pygame.K_8 or event.key == pygame.K_TAB:
                 # End any drag before changing selection so one gesture cannot
                 # accidentally move a second arm's target halfway through.
                 self.dragging = False
@@ -120,6 +216,31 @@ class Application:
                 self.restart()
             else:
                 self._adjust_parameters(event.key)
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and LOAD_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.open_scenario()
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and SAVE_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.open_scenario(saving=True)
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and CLEAR_SCENARIO_BUTTON.collidepoint(event.pos)
+        ):
+            self.clear()
+        elif (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and SCENARIO_NAME_BUTTON.collidepoint(event.pos)
+        ):
+            self.dragging = self.dragging_object = False
+            self.name_prompt = ScenarioNamePrompt(self.scenario_name)
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
             if event.button == 1:
                 self.dragging_object = False
@@ -189,7 +310,7 @@ class Application:
 
         :param elapsed_seconds: Real frame duration in seconds from the display clock.
         """
-        if self.paused:
+        if self.paused or self.picker is not None or self.name_prompt is not None:
             return
 
         # Fixed ticks make the solver independent of rendering frequency. Limiting
@@ -217,12 +338,11 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as error:
             parser.error(str(error))
     application = Application(scenario)
+    if args.scenario is not None:
+        application.scenario_directory = args.scenario.resolve().parent
     pygame.init()
     try:
-        caption = "Distributed Octopus Controller"
-        if scenario is not None:
-            caption += f" — {scenario.name}"
-        pygame.display.set_caption(caption)
+        pygame.display.set_caption(f"Distributed Octopus Controller — {application.scenario_name}")
         icon_path = Path(__file__).parent / "assets" / "octopus.png"
         icon = pygame.image.load(icon_path)
         pygame.display.set_icon(icon)
@@ -243,6 +363,9 @@ def main(argv: list[str] | None = None) -> None:
                 if not application.handle_event(event):
                     running = False
             if running:
+                pygame.display.set_caption(
+                    f"Distributed Octopus Controller — {application.scenario_name}"
+                )
                 application.advance(elapsed_seconds)
                 draw_scene(
                     screen,
@@ -256,7 +379,18 @@ def main(argv: list[str] | None = None) -> None:
                     application.selected_object,
                     application.placement,
                     shortcuts_font,
+                    application.scenario_name,
+                    application.load_error,
                 )
+                if application.save_notice:
+                    screen.set_clip(WORLD)
+                    notice = font.render(application.save_notice, True, (79, 212, 184))
+                    screen.blit(notice, (WORLD.left + 16, WORLD.bottom - 28))
+                    screen.set_clip(None)
+                if application.picker is not None:
+                    application.picker.draw(screen, font)
+                if application.name_prompt is not None:
+                    application.name_prompt.draw(screen, font)
                 pygame.display.flip()
     finally:
         # Release SDL resources even if an input or drawing error is raised.
