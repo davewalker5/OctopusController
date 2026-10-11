@@ -359,6 +359,23 @@ try {
     }),
     'Hazard',
   );
+  await page.locator('#scenario').selectOption('hazard-escalation');
+  await page.waitForFunction(
+    () => document.querySelector('#world-title').textContent === 'High-priority hazard',
+  );
+  await page.locator('#arm-2').click();
+  await page.evaluate(async () => {
+    const { simulation } = await import('./js/app.js');
+    for (let i = 0; i < 70; i++) simulation.singleStep();
+  });
+  await settled(page);
+  assert.equal(await page.locator('#arm-state').textContent(), 'Withdrawing');
+  assert.match(await page.locator('#central-goal').textContent(), /Withdraw affected arms/);
+  assert.match(await page.locator('#priority-log').textContent(), /P100/);
+  await page.screenshot({ path: `${output}/${engine}-escalation.png`, fullPage: true });
+  await page.locator('#restart').click();
+  assert.equal(await page.locator('#priority-log').textContent(), '');
+  assert.match(await page.locator('#priority-counts').textContent(), /^0 reports/);
   assert.deepEqual(failures, []);
   const report = {
     engine,

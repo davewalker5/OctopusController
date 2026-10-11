@@ -34,6 +34,7 @@ The project currently explores five progressively more sophisticated capabilitie
 4. **Obstacle avoidance** — modifying arm movements in response to obstacles encountered while reaching towards a target
 5. **Grasping** — demonstrating object interaction through the coordinated positioning and curling of an arm
 6. **Local Hazards and Recoil** - detection of hazards by the arms with recoil interrupting local reaching
+7. **Escalation** - priority signalling of hazards with escalation to the central controller
 
 Together, these demonstrations illustrate a progression from simple movement control towards more complex, environmentally responsive behaviour.
 

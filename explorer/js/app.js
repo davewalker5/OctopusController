@@ -152,13 +152,30 @@ function readout() {
   $('clock').textContent =
     `${central.simulationSeconds.toFixed(2)} s · ${central.captureCount} captures`;
   $('arm-state').textContent = arm.state;
+  $('central-goal').textContent = `Central goal: ${central.priority.goal}`;
+  $('priority-counts').textContent =
+    `${central.priority.reportCount} reports · ${central.priority.escalationCount} escalations · ${central.priority.interventionCount} interventions · ${central.priority.known.size} known reports`;
+  const priorityText = central.priority.messages
+    .slice(-6)
+    .map((m) => `${m.simulationSeconds.toFixed(2)}s ${m.text}`);
+  // Avoid rebuilding the communication list on every animation frame.
+  if ($('priority-log').dataset.signature !== JSON.stringify(priorityText)) {
+    $('priority-log').replaceChildren(
+      ...priorityText.map((text) => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        return item;
+      }),
+    );
+    $('priority-log').dataset.signature = JSON.stringify(priorityText);
+  }
   const goal = arm.grip
     ? arm.active
       ? 'Payload destination'
       : 'Food held'
     : arm.controller.status;
   $('arm-detail').textContent =
-    `${goal} · hazard severity ${arm.controller.hazard.severity.toFixed(2)} · encounters ${arm.controller.hazard.encounters} · ${arm.contacts.length} contacts${arm.grip ? ` · food ${arm.grip.objectId}` : ` · ${arm.controller.distance.toFixed(1)} px to target`}`;
+    `${goal} · central notification: ${arm.signaller.notification} · sensed hazards ${arm.signaller.detectedCount} · local severity ${arm.signaller.severity.toFixed(2)} · encounters ${arm.controller.hazard.encounters} · ${arm.contacts.length} contacts${arm.grip ? ` · food ${arm.grip.objectId}` : ` · ${arm.controller.distance.toFixed(1)} px to target`}`;
   $('destination-label').textContent = `${arm.grip ? 'Food' : 'Tip'} destination · pixels`;
   root.querySelector('[data-action="retract"]').disabled = !arm.grip;
   root.querySelector('[data-action="release"]').disabled = !arm.grip;

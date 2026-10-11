@@ -81,6 +81,7 @@
             <label for="scenario">Starting conditions</label
             ><select id="scenario">
               <option value="demo">Original demonstration</option>
+              <option value="hazard-escalation">High-priority hazard</option>
               <option value="local-hazard">Local hazard and recoil</option>
               <option value="local-obstacle">Obstacle comparison</option>
               <option value="behaviour-showcase">Behaviour showcase</option>
@@ -98,6 +99,12 @@
               ><button id="restart" type="button">Restart</button>
             </div>
             <p class="hint">Scenarios load paused. Restart restores the starting scene.</p>
+          </section>
+          <section class="card control-card">
+            <p class="eyebrow">PRIORITY COMMUNICATION</p>
+            <p id="central-goal">Continue assignments</p>
+            <p id="priority-counts">No hazard reports</p>
+            <ol id="priority-log" class="capture-log"></ol>
           </section>
           <section class="card control-card">
             <p class="eyebrow">02 / SELECTED ARM</p>

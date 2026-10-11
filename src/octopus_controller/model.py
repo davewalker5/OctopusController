@@ -108,6 +108,7 @@ class ReachController:
         self.avoiding = False
         self.blocked = False
         self.hazard = HazardResponse()
+        self.withdrawal_goal: Point | None = None
         self.arm = arm
         positions = arm.points
         heading = 0.0
@@ -168,6 +169,8 @@ class ReachController:
         if elapsed_seconds == 0:
             return
         self.hazard.sense(self.arm.points, objects, elapsed_seconds)
+        # The arm chooses its retreat point locally; preserve the central target.
+        movement_goal = self.withdrawal_goal or self.target
         obstacles = tuple(obj for obj in objects if obj.kind is ObjectKind.OBSTACLE)
         self.blocked = False
         self.avoiding = False
@@ -175,7 +178,7 @@ class ReachController:
         # No route can put the tip inside a solid obstacle. Keep the assignment
         # intact so moving the obstacle or target lets the arm resume naturally.
         if self.hazard.state == "Reaching" and any(
-            hypot(self.target[0] - obj.centre[0], self.target[1] - obj.centre[1])
+            hypot(movement_goal[0] - obj.centre[0], movement_goal[1] - obj.centre[1])
             < obj.radius + ARM_CLEARANCE
             for obj in obstacles
         ):
@@ -183,7 +186,10 @@ class ReachController:
             return
         if (
             self.hazard.state == "Reaching"
-            and self.distance <= REACH_TOLERANCE
+            and hypot(
+                self.arm.points[-1][0] - movement_goal[0], self.arm.points[-1][1] - movement_goal[1]
+            )
+            <= REACH_TOLERANCE
             and not any(
                 contact.kind is ObjectKind.OBSTACLE
                 for contact in detect_contacts(self.arm.points, obstacles)
@@ -197,7 +203,7 @@ class ReachController:
         # Read the previous messages before writing any new ones. Otherwise a
         # single loop could pass the target through every segment in one update,
         # hiding the gradual neighbour-to-neighbour communication we want to study.
-        end_goals = [request.start for request in self._requests[1:]] + [self.target]
+        end_goals = [request.start for request in self._requests[1:]] + [movement_goal]
 
         # Redirect only requests whose next few segment lengths meet an obstacle.
         # The target remains unchanged; the altered requests travel through the

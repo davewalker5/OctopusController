@@ -95,6 +95,7 @@ export class ReachController {
    */
   constructor(arm, target) {
     this.hazard = new HazardResponse();
+    this.withdrawalGoal = null;
     this.arm = arm;
     const points = arm.points;
     let heading = 0;
@@ -153,13 +154,15 @@ export class ReachController {
     validateDuration(seconds);
     if (seconds === 0) return;
     this.hazard.sense(this.arm.points, objects, seconds);
+    // The arm supplies a local retreat point without replacing its assignment.
+    const movementGoal = this.withdrawalGoal ?? this.target;
     const obstacles = objects.filter((obj) => obj.kind === ObjectKind.OBSTACLE);
     this.blocked = this.avoiding = false;
     // The tip cannot reach inside a solid circle plus arm clearance. Preserve
     // the assignment so a later target or scene edit can allow it to resume.
     if (
       this.hazard.state === 'Reaching' &&
-      obstacles.some((obj) => distance(this.target, obj.centre) < obj.radius + ARM_CLEARANCE)
+      obstacles.some((obj) => distance(movementGoal, obj.centre) < obj.radius + ARM_CLEARANCE)
     ) {
       this.blocked = true;
       return;
@@ -168,14 +171,14 @@ export class ReachController {
     // obstacle overlaps the current arm. Food never constrains movement.
     if (
       this.hazard.state === 'Reaching' &&
-      this.distance <= 2 &&
+      distance(this.arm.points.at(-1), movementGoal) <= 2 &&
       !detectContacts(this.arm.points, obstacles).length
     )
       return;
     const p = this.arm.parameters,
       positions = this.arm.points;
     // Read all old requests first: a target travels one neighbour per tick.
-    const goals = [...this.requests.slice(1).map((request) => request.start), this.target].map(
+    const goals = [...this.requests.slice(1).map((request) => request.start), movementGoal].map(
       (goal, i) => {
         const [steered, changed] = steerAroundObstacles(
           positions[i],

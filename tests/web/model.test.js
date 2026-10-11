@@ -40,7 +40,28 @@ function close(actual, expected, path = 'root') {
   for (const key of Object.keys(expected)) close(actual[key], expected[key], `${path}.${key}`);
 }
 function snapshot(central, environment) {
+  const priority = central.priority;
+  const report = (r) => [
+    r.armIndex,
+    r.simulationSeconds,
+    r.signal.objectId,
+    r.signal.position,
+    r.signal.severity,
+    r.signal.priority,
+    r.signal.affectedSegments,
+    r.signal.exposureSeconds,
+    r.signal.reason,
+  ];
   return {
+    priority: [
+      priority.goal,
+      priority.reportCount,
+      priority.escalationCount,
+      priority.interventionCount,
+      [...priority.known.values()].map(report),
+      priority.reports.map(report),
+      priority.messages.map((m) => [m.simulationSeconds, m.text]),
+    ],
     seconds: central.simulationSeconds,
     count: central.captureCount,
     reports: central.captureReports.map((r) => [r.armIndex, r.objectId, r.simulationSeconds]),
@@ -57,6 +78,8 @@ function snapshot(central, environment) {
       points: a.controller.arm.points,
       target: a.controller.target,
       active: a.active,
+      notification: a.signaller.notification,
+      withdrawal_goal: a.controller.withdrawalGoal,
       state: a.state,
       status: a.controller.status,
       hazard: [

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from math import cos, hypot, isfinite, pi, sin
 
+from octopus_controller.escalation import EscalationPolicy, HazardSignaller, PriorityReceiver
 from octopus_controller.grasping import (
     CARRY_TOLERANCE,
     GRASP_CONTACT_SECONDS,
@@ -29,6 +30,8 @@ RETRACT_DISTANCE = 40.0  # Pixels outward from the fixed arm attachment.
 class ArmState(Enum):
     """Observable local movement, contact and grasp states."""
 
+    WITHDRAWING = "Withdrawing"
+    ALERT_HOLD = "Holding under alert"
     RECOILING = "Recoiling"
     AVOIDING_HAZARD = "Avoiding hazard"
     REASSESSING = "Reassessing"
@@ -47,13 +50,22 @@ class ArmState(Enum):
 class ControlledArm:
     """One arm's independent local controller, starting direction and assignment."""
 
-    def __init__(self, base: Point, heading: float, target: Point) -> None:
+    def __init__(
+        self,
+        base: Point,
+        heading: float,
+        target: Point,
+        policy: EscalationPolicy = EscalationPolicy(),
+    ) -> None:
         """Create a radial arm with an initial reach assignment.
 
         :param base: Fixed attachment on the body's edge in pixels.
         :param heading: Outward direction in clockwise radians.
         :param target: Initial target in world pixels.
+        :param policy: Validated local reporting and escalation thresholds.
         """
+        self.signaller = HazardSignaller(policy)
+        self.withdrawal_requested = False
         self.initial_heading = heading
         self.controller = ReachController(Arm(base, DEFAULT_PARAMETERS, heading), target)
         self.active = True
@@ -69,6 +81,10 @@ class ControlledArm:
         """Report movement constraints first, then contact and assignment progress."""
         # Blocking does not cancel an assignment. Keep sensing available in the
         # contacts list even when the status explains why movement has stopped.
+        if self.withdrawal_requested:
+            if self.grip is not None:
+                return ArmState.ALERT_HOLD
+            return ArmState.WITHDRAWING
         if self.active and self.controller.hazard.state != "Reaching":
             return ArmState(self.controller.hazard.state)
         if self.active and self.controller.blocked:
@@ -88,6 +104,30 @@ class ControlledArm:
         if self.controller.status == "Reached":
             return ArmState.REACHED
         return ArmState.REACHING
+
+    def request_withdrawal(self, requested: bool) -> None:
+        """Interpret a broad central request using this arm's own attachment.
+
+        The fixed body cannot retreat. An unladen arm instead draws its
+        tip towards its base; local hazard and obstacle steering still apply.
+        Preserve the current assignment so clear reports can resume it. A grip
+        stays attached and motion pauses: releasing it needs Phase 3 arbitration.
+
+        :param requested: Whether central priority currently suspends this arm.
+        """
+        self.withdrawal_requested = requested
+        base = self.controller.arm.base
+        self.controller.withdrawal_goal = (
+            (
+                base[0] + RETRACT_DISTANCE * cos(self.initial_heading),
+                base[1] + RETRACT_DISTANCE * sin(self.initial_heading),
+            )
+            if requested
+            else None
+        )
+        if requested:
+            self._candidate = None
+            self._contact_seconds = 0.0
 
     def assign_reach(self, target: Point) -> None:
         """Assign a tip objective, or an object destination while carrying.
@@ -134,6 +174,7 @@ class ControlledArm:
         # controller seeds messages from the new pose, leaving other arms alone.
         self.controller = ReachController(arm, previous.target)
         self.contacts = ()
+        self.request_withdrawal(self.withdrawal_requested)
 
     def sense(self, objects: tuple[WorldObject, ...]) -> None:
         """Refresh this arm's local observations, including while the arm is idle.
@@ -162,7 +203,7 @@ class ControlledArm:
             self._contact_seconds = 0.0
 
     def update(self, elapsed_seconds: float, objects: tuple[WorldObject, ...] = ()) -> None:
-        """Advance this arm's local rules only while it has a reach assignment.
+        """Advance local movement for an assignment or an unladen withdrawal request.
 
         :param elapsed_seconds: Finite non-negative simulation duration in seconds.
         :param objects: Current sensing objects; an empty tuple clears old readings.
@@ -170,7 +211,9 @@ class ControlledArm:
         """
         if not isfinite(elapsed_seconds) or elapsed_seconds < 0:
             raise ValueError("Elapsed seconds must be finite and non-negative")
-        if self.active:
+        if (self.active or self.withdrawal_requested) and not (
+            self.withdrawal_requested and self.grip is not None
+        ):
             self.controller.update(elapsed_seconds, objects)
 
         # Sample the resulting pose so the displayed contacts match the visible arm.
@@ -219,6 +262,9 @@ class ControlledArm:
 
         objects = environment.objects
         self.sense(objects)
+        if self.withdrawal_requested:
+            self.update(elapsed_seconds, objects)
+            return None
         if self.grip is not None:
             self._carry(elapsed_seconds, environment)
             return None
@@ -320,13 +366,16 @@ class CentralController:
     All arms receive the same elapsed time, but none reads another arm's state.
     """
 
-    def __init__(self, centre: Point) -> None:
+    def __init__(self, centre: Point, policy: EscalationPolicy = EscalationPolicy()) -> None:
         """Arrange eight arms around a fixed body with separate starting targets.
 
         :param centre: Body centre in world pixels.
+        :param policy: Validated thresholds used by each independent arm signaller.
         :raises ValueError: If the centre coordinates are invalid.
         """
         validate_point(centre)
+        self.policy = policy
+        self.priority = PriorityReceiver()
         self.centre = tuple(centre)
         self.simulation_seconds = 0.0
         self.capture_count = 0
@@ -345,7 +394,7 @@ class CentralController:
                 base[0] + DEFAULT_TARGET_DISTANCE * cos(heading - 0.3),
                 base[1] + DEFAULT_TARGET_DISTANCE * sin(heading - 0.3),
             )
-            arms.append(ControlledArm(base, heading, target))
+            arms.append(ControlledArm(base, heading, target, policy))
         self.arms = tuple(arms)
 
     def arm(self, index: int) -> ControlledArm:
@@ -377,7 +426,7 @@ class CentralController:
         self.arm(index).idle()
 
     def update(self, elapsed_seconds: float, objects: tuple[WorldObject, ...] = ()) -> None:
-        """Run reach/sensing against a read-only snapshot, without manipulating objects.
+        """Advance reaching, sensing and priority time without manipulating objects.
 
         Use step with an Environment for the full grasp/carry lifecycle. A snapshot
         cannot receive object movements or exclusive capture claims.
@@ -388,8 +437,25 @@ class CentralController:
         """
         if not isfinite(elapsed_seconds) or elapsed_seconds < 0:
             raise ValueError("Elapsed seconds must be finite and non-negative")
+        if elapsed_seconds == 0:
+            return
+        self.simulation_seconds += elapsed_seconds
+        self._signal_priorities(elapsed_seconds, objects)
         for arm in self.arms:
             arm.update(elapsed_seconds, objects)
+
+    def _signal_priorities(self, elapsed_seconds: float, objects: tuple[WorldObject, ...]) -> None:
+        """Schedule arm-local sensing, then receive messages before moving any arm.
+
+        :param elapsed_seconds: Positive simulation duration, already validated.
+        :param objects: Snapshot passed to each arm; never inspected centrally.
+        """
+        for index, arm in enumerate(self.arms):
+            signals = arm.signaller.update(arm.controller.arm.points, objects, elapsed_seconds)
+            requested = self.priority.receive(
+                index, signals, self.simulation_seconds, arm.grip is not None
+            )
+            arm.request_withdrawal(requested)
 
     def refresh_sensing(self, objects: tuple[WorldObject, ...]) -> None:
         """Refresh observations after scene edits without advancing movement or time.
@@ -413,6 +479,7 @@ class CentralController:
         if elapsed_seconds == 0:
             return
         self.simulation_seconds += elapsed_seconds
+        self._signal_priorities(elapsed_seconds, environment.objects)
         owners = {arm.grip.object_id for arm in self.arms if arm.grip is not None}
         for index, arm in enumerate(self.arms):
             captured = arm.update_grasp(elapsed_seconds, environment, owners)

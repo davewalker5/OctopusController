@@ -1,10 +1,11 @@
 """Validate versioned JSON starting conditions and build fresh simulation scenes."""
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from math import isfinite, radians
 from pathlib import Path
 
+from octopus_controller.escalation import EscalationPolicy
 from octopus_controller.geometry import Point
 from octopus_controller.model import ArmParameters
 from octopus_controller.organism import ARM_COUNT, DEFAULT_PARAMETERS, CentralController
@@ -29,12 +30,13 @@ class Scenario:
     body: Point
     objects: tuple[WorldObject, ...]
     arms: tuple[ArmSetup, ...]
+    escalation: EscalationPolicy = EscalationPolicy()
 
     def build(self) -> tuple[CentralController, Environment]:
         """Return a fresh scene with reset poses, sensing, time and capture state."""
         # Rebuild mutable runtime state rather than reusing a previous run: poses,
         # grips and capture history must never leak into a restart.
-        central = CentralController(self.body)
+        central = CentralController(self.body, self.escalation)
         environment = Environment()
         for obj in self.objects:
             environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detection_range)
@@ -133,7 +135,17 @@ def parse_scenario(value: object) -> Scenario:
     # check prevents True or 1.0 from being accepted as format version 1.
     data = _mapping(
         value,
-        {"version", "name", "body", "defaults", "food", "obstacles", "hazards", "arms"},
+        {
+            "version",
+            "name",
+            "body",
+            "defaults",
+            "food",
+            "obstacles",
+            "hazards",
+            "arms",
+            "escalation",
+        },
         "Scenario",
     )
     if type(data.get("version")) is not int or data["version"] != 1:
@@ -239,7 +251,13 @@ def parse_scenario(value: object) -> Scenario:
 
     # Publish only after every entry is valid. Tuples and frozen records detach
     # restart conditions from both the decoded JSON and the mutable running scene.
-    return Scenario(name, body, tuple(objects), tuple(arms))
+    raw_policy = _mapping(
+        data.get("escalation", {}), set(EscalationPolicy.__dataclass_fields__), "escalation"
+    )
+    policy = EscalationPolicy(
+        **{key: _number(value, f"escalation.{key}") for key, value in raw_policy.items()}
+    )
+    return Scenario(name, body, tuple(objects), tuple(arms), policy)
 
 
 def _unique_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -295,6 +313,7 @@ def save_scenario(
         "obstacles": [],
         "hazards": [],
         "arms": [],
+        "escalation": asdict(central.policy),
     }
     for obj in environment.objects:
         entry = {"position": list(obj.centre), "radius": obj.radius}

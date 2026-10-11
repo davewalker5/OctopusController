@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "High-priority hazard",
+  "body": [
+    280,
+    350
+  ],
+  "defaults": {
+    "segment_length": 18,
+    "segment_count": 2
+  },
+  "food": [
+    {
+      "id": "goal",
+      "position": [
+        462,
+        350
+      ],
+      "radius": 8
+    }
+  ],
+  "arms": [
+    {
+      "number": 3,
+      "target": {
+        "food": "goal"
+      },
+      "parameters": {
+        "segment_count": 20
+      }
+    }
+  ],
+  "hazards": [
+    {
+      "position": [
+        402,
+        450
+      ],
+      "radius": 14,
+      "severity": 0.9,
+      "detection_range": 24
+    }
+  ],
+  "escalation": {
+    "report_severity": 0.4,
+    "withdrawal_severity": 0.75,
+    "exposure_seconds": 2,
+    "clear_seconds": 0.6
+  }
+}

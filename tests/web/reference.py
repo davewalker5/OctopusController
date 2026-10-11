@@ -15,7 +15,33 @@ from octopus_controller.sensing import Environment, ObjectKind
 
 def snapshot(central, environment):
     """Keep numerical state, local messages and discrete events observable."""
+    priority = central.priority
+
+    def report(r):
+        """Serialise immutable signals in the same field order as browser tests."""
+        s = r.signal
+        return [
+            r.arm_index,
+            r.simulation_seconds,
+            s.object_id,
+            s.position,
+            s.severity,
+            s.priority,
+            s.affected_segments,
+            s.exposure_seconds,
+            s.reason,
+        ]
+
     return {
+        "priority": [
+            priority.goal,
+            priority.report_count,
+            priority.escalation_count,
+            priority.intervention_count,
+            [report(r) for r in priority.known.values()],
+            [report(r) for r in priority.reports],
+            [[m.simulation_seconds, m.text] for m in priority.messages],
+        ],
         "seconds": central.simulation_seconds,
         "count": central.capture_count,
         "reports": [
@@ -31,6 +57,8 @@ def snapshot(central, environment):
                 "points": a.controller.arm.points,
                 "target": a.controller.target,
                 "active": a.active,
+                "notification": a.signaller.notification,
+                "withdrawal_goal": a.controller.withdrawal_goal,
                 "state": a.state.value,
                 "status": a.controller.status,
                 "hazard": [
@@ -149,6 +177,7 @@ else:
                         "two-targets",
                         "behaviour-showcase",
                         "local-hazard",
+                        "hazard-escalation",
                         "local-obstacle",
                         "grasp",
                     )

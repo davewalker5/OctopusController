@@ -6,6 +6,7 @@
  * stable order. All geometry is in world pixels; model angles are radians.
  */
 
+import { escalationPolicy, HazardSignaller, PriorityReceiver } from './escalation.js';
 import { distance, validatePoint, validateDuration } from './geometry.js';
 import { Arm, armParameters, ReachController } from './model.js';
 import { detectContacts } from './sensing.js';
@@ -33,9 +34,12 @@ export class ControlledArm {
    * @param {import('./geometry.js').Point} base Fixed attachment on the body, in pixels.
    * @param {number} heading Initial outward heading in clockwise radians.
    * @param {import('./geometry.js').Point} target Initial tip objective in pixels.
+   * @param {object} policy Validated reporting and escalation thresholds.
    * @throws {Error} If base, heading or target geometry is invalid.
    */
-  constructor(base, heading, target) {
+  constructor(base, heading, target, policy = escalationPolicy()) {
+    this.signaller = new HazardSignaller(policy);
+    this.withdrawalRequested = false;
     this.initialHeading = heading;
     this.controller = new ReachController(new Arm(base, DEFAULT_PARAMETERS, heading), target);
     this.contacts = [];
@@ -52,6 +56,10 @@ export class ControlledArm {
    * @returns {string} Human-readable local activity state.
    */
   get state() {
+    if (this.withdrawalRequested) {
+      if (this.grip) return 'Holding under alert';
+      return 'Withdrawing';
+    }
     if (this.active && this.controller.hazard.state !== 'Reaching')
       return this.controller.hazard.state;
     if (this.active && this.controller.blocked) return 'Blocked';
@@ -61,6 +69,24 @@ export class ControlledArm {
     if (this.contacts.length) return 'Contact';
     if (!this.active) return 'Idle';
     return this.controller.status === 'Reached' ? 'Reached' : 'Reaching';
+  }
+  /**
+   * Interpret a broad withdrawal command using this arm's own attachment.
+   * Preserve the goal; local steering still controls the retreat. Held food stays
+   * attached and motion pauses until clearance, deferring release arbitration.
+   * @param {boolean} requested Whether central priority suspends this assignment.
+   * @returns {void} Updates the local retreat request without changing activity.
+   */
+  requestWithdrawal(requested) {
+    this.withdrawalRequested = requested;
+    const base = this.controller.arm.base;
+    this.controller.withdrawalGoal = requested
+      ? [base[0] + 40 * Math.cos(this.initialHeading), base[1] + 40 * Math.sin(this.initialHeading)]
+      : null;
+    if (requested) {
+      this.candidate = null;
+      this.contactSeconds = 0;
+    }
   }
   /**
    * Assign a destination and restart active work without changing the current pose.
@@ -106,6 +132,7 @@ export class ControlledArm {
       previous.target,
     );
     this.contacts = [];
+    this.requestWithdrawal(this.withdrawalRequested);
   }
   /**
    * Refresh local observations and reconcile external edits, including while paused.
@@ -142,7 +169,8 @@ export class ControlledArm {
    */
   update(seconds, objects = []) {
     validateDuration(seconds);
-    if (this.active) this.controller.update(seconds, objects);
+    if ((this.active || this.withdrawalRequested) && !(this.withdrawalRequested && this.grip))
+      this.controller.update(seconds, objects);
     this.sense(objects);
   }
   /**
@@ -186,6 +214,10 @@ export class ControlledArm {
     // payload moved by an earlier arm is visible to the later arms this tick.
     const objects = environment.objects;
     this.sense(objects);
+    if (this.withdrawalRequested) {
+      this.update(seconds, objects);
+      return null;
+    }
     if (this.grip) {
       this.carry(seconds, environment);
       return null;
@@ -289,9 +321,12 @@ export class CentralController {
   /**
    * Arrange eight independently controlled arms around a fixed body.
    * @param {import('./geometry.js').Point} centre Body centre in world pixels.
+   * @param {object} policy Validated thresholds for each arm signaller.
    * @throws {Error} If the body coordinates are invalid.
    */
-  constructor(centre) {
+  constructor(centre, policy = escalationPolicy()) {
+    this.policy = policy;
+    this.priority = new PriorityReceiver();
     validatePoint(centre);
     this.centre = [...centre];
     this.simulationSeconds = 0;
@@ -303,10 +338,12 @@ export class CentralController {
     this.arms = Array.from({ length: 8 }, (_, index) => {
       const heading = -Math.PI / 2 + (index * 2 * Math.PI) / 8;
       const base = [centre[0] + 32 * Math.cos(heading), centre[1] + 32 * Math.sin(heading)];
-      return new ControlledArm(base, heading, [
-        base[0] + 180 * Math.cos(heading - 0.3),
-        base[1] + 180 * Math.sin(heading - 0.3),
-      ]);
+      return new ControlledArm(
+        base,
+        heading,
+        [base[0] + 180 * Math.cos(heading - 0.3), base[1] + 180 * Math.sin(heading - 0.3)],
+        policy,
+      );
     });
   }
   /**
@@ -340,7 +377,7 @@ export class CentralController {
     this.arm(index).idle();
   }
   /**
-   * Run reach/sensing against a snapshot without advancing central time or ownership.
+   * Run reach/sensing and priority reporting without changing object ownership.
    *
    * A read-only snapshot cannot receive object movements. Use step() with an
    * Environment for normal playback of the full grasp/carry lifecycle.
@@ -351,7 +388,24 @@ export class CentralController {
    */
   update(seconds, objects = []) {
     validateDuration(seconds);
+    if (seconds === 0) return;
+    this.simulationSeconds += seconds;
+    this.signalPriorities(seconds, objects);
     this.arms.forEach((arm) => arm.update(seconds, objects));
+  }
+  /**
+   * Schedule local sensing and receive messages before any arm moves.
+   * @param {number} seconds Positive validated simulation duration.
+   * @param {object[]} objects Snapshot passed to arms, never inspected centrally.
+   * @returns {void} Delivers broad priority commands to the affected arms only.
+   */
+  signalPriorities(seconds, objects) {
+    this.arms.forEach((arm, index) => {
+      const signals = arm.signaller.update(arm.controller.arm.points, objects, seconds);
+      arm.requestWithdrawal(
+        this.priority.receive(index, signals, this.simulationSeconds, Boolean(arm.grip)),
+      );
+    });
   }
   /**
    * Refresh every arm after a scene edit without advancing motion or simulation time.
@@ -372,6 +426,7 @@ export class CentralController {
     validateDuration(seconds);
     if (seconds === 0) return;
     this.simulationSeconds += seconds;
+    this.signalPriorities(seconds, environment.objects);
     const owners = new Set(this.arms.filter((arm) => arm.grip).map((arm) => arm.grip.objectId));
     this.arms.forEach((arm, index) => {
       const captured = arm.updateGrasp(seconds, environment, owners);

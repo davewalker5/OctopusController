@@ -16,6 +16,7 @@
  * @property {ArmSetup[]} arms Eight resolved starting assignments, in arm-index order.
  */
 
+import { escalationPolicy } from './escalation.js';
 import { armParameters } from './model.js';
 import { CentralController, DEFAULT_PARAMETERS } from './organism.js';
 import { Environment, ObjectKind, worldObject } from './sensing.js';
@@ -254,7 +255,7 @@ function parameters(value, base, location) {
 export function parseScenario(text) {
   const data = mapping(
     decodeJSON(text),
-    ['version', 'name', 'body', 'defaults', 'food', 'obstacles', 'hazards', 'arms'],
+    ['version', 'name', 'body', 'defaults', 'food', 'obstacles', 'hazards', 'arms', 'escalation'],
     'Scenario',
   );
   // Presence checks below distinguish an omitted default from explicit null.
@@ -356,7 +357,18 @@ export function parseScenario(text) {
   }
   // Publish only fully validated, frozen starting conditions. Runtime poses,
   // grips and capture history are deliberately not part of the scenario format.
+  const rawPolicy = mapping(
+    Object.hasOwn(data, 'escalation') ? data.escalation : {},
+    Object.keys(escalationPolicy()),
+    'escalation',
+  );
+  const escalation = escalationPolicy(
+    Object.fromEntries(
+      Object.entries(rawPolicy).map(([key, value]) => [key, number(value, `escalation.${key}`)]),
+    ),
+  );
   return Object.freeze({
+    escalation,
     name,
     body,
     objects: Object.freeze(objects),
@@ -370,7 +382,7 @@ export function parseScenario(text) {
  * @throws {Error} If model construction rejects the supplied geometry.
  */
 export function buildScenario(scenario) {
-  const central = new CentralController(scenario.body),
+  const central = new CentralController(scenario.body, scenario.escalation),
     environment = new Environment();
   for (const obj of scenario.objects)
     environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detectionRange);

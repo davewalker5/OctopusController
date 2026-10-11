@@ -136,6 +136,29 @@ def draw_scene(
         label = font.render(str(index + 1), True, ARM_COLOURS[index])
         screen.blit(label, label.get_rect(center=base))
 
+    # The receiver exposes only explicit reports. This panel must not inspect
+    # environment hazards to infer central knowledge or invent notifications.
+    if not central.priority.messages:
+        goal_font = shortcuts_font or pygame.font.Font(None, 18)
+        screen.blit(
+            goal_font.render(f"Central: {central.priority.goal} | no reports", True, MUTED),
+            (WORLD.left + 16, WORLD.top + 12),
+        )
+    if central.priority.messages:
+        panel = pygame.Rect(WORLD.left + 12, WORLD.bottom - 136, WORLD.width - 24, 124)
+        pygame.draw.rect(screen, (16, 26, 39), panel, border_radius=8)
+        log_font = shortcuts_font or pygame.font.Font(None, 18)
+        heading = (
+            f"Central: {central.priority.goal} | reports {central.priority.report_count}"
+            f" | interventions {central.priority.intervention_count}"
+        )
+        screen.blit(log_font.render(heading, True, ACCENT), (panel.left + 12, panel.top + 10))
+        for row, message in enumerate(list(central.priority.messages)[-4:]):
+            label = f"{message.simulation_seconds:.2f}s  {message.text}"
+            screen.blit(
+                log_font.render(label, True, TEXT), (panel.left + 12, panel.top + 34 + row * 20)
+            )
+
     # Restore drawing across the whole window before rendering the side panel.
     screen.set_clip(None)
     draw_sidebar(
@@ -151,7 +174,9 @@ def draw_scene(
         # Keep the active placement instruction close to the world where the
         # next click applies, separate from the permanent shortcut reference.
         hint = font.render(
-            f"Click to place {placement.value.lower()}  /  press F or O to change tool", True, TEXT
+            f"Click to place {placement.value.lower()}  /  press F, O or H to change tool",
+            True,
+            TEXT,
         )
         box = hint.get_rect(topleft=(36, WORLD.bottom - 33)).inflate(16, 12)
         pygame.draw.rect(screen, (39, 61, 77), box, border_radius=6)
@@ -271,7 +296,10 @@ def draw_sidebar(
             pygame.draw.rect(screen, (39, 61, 77), row, border_radius=5)
             pygame.draw.rect(screen, ARM_COLOURS[index], row, width=1, border_radius=5)
         pygame.draw.circle(screen, ARM_COLOURS[index], (row.left + 10, row.centery), 3)
-        state_label = f"{index + 1}  {arm.state.value}"
+        state_name = (
+            "Holding (alert)" if arm.state.value == "Holding under alert" else arm.state.value
+        )
+        state_label = f"{index + 1}  {state_name}"
         state_font = font if font.size(state_label)[0] <= row.width - 24 else shortcuts_font
         label = state_font.render(state_label, True, ARM_COLOURS[index])
         screen.blit(label, (row.left + 20, row.top + 4))
@@ -321,9 +349,9 @@ def draw_sidebar(
     screen.blit(
         shortcuts_font.render(
             (
-                f"Hazard {controller.hazard.severity:.2f}"
+                f"Hazard {max(controller.hazard.severity, selected.signaller.severity):.2f}"
                 f" / encounters {controller.hazard.encounters}"
-                if controller.hazard.encounters
+                if controller.hazard.encounters or selected.signaller.detected_count
                 else f"Sensors  {sensor_count}/{parameters.segment_count}  /  {kinds}"
             ),
             True,
@@ -337,6 +365,8 @@ def draw_sidebar(
         if last_capture
         else "No captures reported"
     )
+    if selected.signaller.notification != "None":
+        report = f"Central notice: {selected.signaller.notification}"
     screen.blit(
         shortcuts_font.render(report, True, ACCENT if last_capture else MUTED), (808, top + 342)
     )
