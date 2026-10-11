@@ -155,14 +155,16 @@ export class SceneView {
     c.textAlign = 'left';
     for (const obj of simulation.environment.objects) {
       const food = obj.kind === ObjectKind.FOOD,
-        colour = food ? '#83d178' : '#e59b69';
+        colour = obj.kind === ObjectKind.HAZARD ? '#f064a0' : food ? '#83d178' : '#e59b69';
+      if (obj.kind === ObjectKind.HAZARD)
+        this.circle(obj.centre, obj.radius + obj.detectionRange, colour, false, 1);
       this.circle(obj.centre, obj.radius, food ? '#203f35' : '#44382e', true);
       this.circle(obj.centre, obj.radius, colour, false, 2);
       c.fillStyle = colour;
       // Put the type letter outside the circle so a destination cross at its
       // centre does not obscure the non-colour distinction between food/obstacle.
       c.fillText(
-        `${food ? 'F' : 'O'}${obj.identifier}`,
+        `${obj.kind === ObjectKind.HAZARD ? 'H' : food ? 'F' : 'O'}${obj.identifier}`,
         obj.centre[0] - obj.radius,
         obj.centre[1] - obj.radius - 6,
       );

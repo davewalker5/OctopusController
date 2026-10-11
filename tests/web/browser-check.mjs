@@ -336,6 +336,29 @@ try {
     path: `${output}/${engine}-touch.png`,
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator('#scenario').selectOption('local-hazard');
+  await page.waitForFunction(
+    () => document.querySelector('#world-title').textContent === 'Local hazard and recoil',
+  );
+  await page.locator('#arm-2').click();
+  await page.evaluate(async () => {
+    const { simulation } = await import('./js/app.js');
+    for (let i = 0; i < 70; i++) simulation.singleStep();
+  });
+  await settled(page);
+  assert.equal(await page.locator('#arm-state').textContent(), 'Recoiling');
+  await page.screenshot({ path: `${output}/${engine}-hazard.png`, fullPage: true });
+  await page.locator('#object-x').fill('650');
+  await page.locator('#object-y').fill('600');
+  await page.locator('button[value="Hazard"]').click();
+  assert.equal(
+    await page.evaluate(async () => {
+      const { simulation } = await import('./js/app.js');
+      return simulation.environment.objects.at(-1).kind;
+    }),
+    'Hazard',
+  );
   assert.deepEqual(failures, []);
   const report = {
     engine,

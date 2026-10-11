@@ -21,6 +21,7 @@ class ObjectKind(Enum):
 
     FOOD = "Food"
     OBSTACLE = "Obstacle"
+    HAZARD = "Hazard"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class WorldObject:
     centre: Point
     kind: ObjectKind
     radius: float = OBJECT_RADIUS
+    severity: float = 0.5
+    detection_range: float = 24.0
 
     def __post_init__(self) -> None:
         """Reject invalid geometry or identities before they enter a sensor reading.
@@ -44,6 +47,19 @@ class WorldObject:
             raise ValueError("Object radius must be finite and positive")
         if not isinstance(self.kind, ObjectKind):
             raise ValueError("Object kind must be an ObjectKind")
+
+        if (
+            type(self.severity) not in (int, float)
+            or not isfinite(self.severity)
+            or not 0 < self.severity <= 1
+        ):
+            raise ValueError("Hazard severity must be in (0, 1]")
+        if (
+            type(self.detection_range) not in (int, float)
+            or not isfinite(self.detection_range)
+            or self.detection_range < 0
+        ):
+            raise ValueError("Hazard detection range must be finite and non-negative")
 
         # Copy coordinates so a caller's mutable list cannot move an object behind
         # the scene's back while a sensor is reading it.
@@ -107,7 +123,14 @@ class Environment:
         """Return the current scene in insertion order without exposing its storage."""
         return tuple(self._objects.values())
 
-    def add(self, centre: Point, kind: ObjectKind, radius: float = OBJECT_RADIUS) -> int:
+    def add(
+        self,
+        centre: Point,
+        kind: ObjectKind,
+        radius: float = OBJECT_RADIUS,
+        severity: float = 0.5,
+        detection_range: float = 24.0,
+    ) -> int:
         """Place a sensing object and return its permanent scene identity.
 
         :param centre: Object centre in world pixels.
@@ -116,7 +139,7 @@ class Environment:
         :return: Newly allocated object ID.
         :raises ValueError: If the object's geometry or kind is invalid.
         """
-        obj = WorldObject(self._next_identifier, centre, kind, radius)
+        obj = WorldObject(self._next_identifier, centre, kind, radius, severity, detection_range)
         self._objects[obj.identifier] = obj
         self._next_identifier += 1
         return obj.identifier

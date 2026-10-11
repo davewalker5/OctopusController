@@ -37,7 +37,7 @@ class Scenario:
         central = CentralController(self.body)
         environment = Environment()
         for obj in self.objects:
-            environment.add(obj.centre, obj.kind, obj.radius)
+            environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detection_range)
         for arm, setup in zip(central.arms, self.arms):
             arm.reset_pose(setup.parameters)
             if setup.target is None:
@@ -132,7 +132,9 @@ def parse_scenario(value: object) -> Scenario:
     # Validate the envelope before interpreting nested fields. An exact integer
     # check prevents True or 1.0 from being accepted as format version 1.
     data = _mapping(
-        value, {"version", "name", "body", "defaults", "food", "obstacles", "arms"}, "Scenario"
+        value,
+        {"version", "name", "body", "defaults", "food", "obstacles", "hazards", "arms"},
+        "Scenario",
     )
     if type(data.get("version")) is not int or data["version"] != 1:
         raise ValueError("Scenario.version must be 1")
@@ -152,11 +154,17 @@ def parse_scenario(value: object) -> Scenario:
     # the numeric identities used by the simulation for contacts and grips.
     objects = []
     food_positions = {}
-    for collection, kind in (("food", ObjectKind.FOOD), ("obstacles", ObjectKind.OBSTACLE)):
+    for collection, kind in (
+        ("food", ObjectKind.FOOD),
+        ("obstacles", ObjectKind.OBSTACLE),
+        ("hazards", ObjectKind.HAZARD),
+    ):
         for index, raw in enumerate(_array(data.get(collection, []), collection)):
             # Include the collection and index in errors to identify the bad entry.
             location = f"{collection}[{index}]"
             allowed = {"position", "radius"} | ({"id"} if kind is ObjectKind.FOOD else set())
+            if kind is ObjectKind.HAZARD:
+                allowed |= {"severity", "detection_range"}
             obj = _mapping(raw, allowed, location)
             position = _point(obj.get("position"), f"{location}.position")
             radius = _number(obj.get("radius", OBJECT_RADIUS), f"{location}.radius")
@@ -175,7 +183,16 @@ def parse_scenario(value: object) -> Scenario:
 
             # Stable insertion order reproduces these numeric IDs when build()
             # adds the objects to a fresh environment.
-            objects.append(WorldObject(len(objects) + 1, position, kind, radius))
+            objects.append(
+                WorldObject(
+                    len(objects) + 1,
+                    position,
+                    kind,
+                    radius,
+                    _number(obj.get("severity", 0.5), f"{location}.severity"),
+                    _number(obj.get("detection_range", 24.0), f"{location}.detection_range"),
+                )
+            )
 
     # All eight arms exist even if omitted from the file. Seed idle setups, then
     # replace the explicitly numbered entries without depending on their order.
@@ -276,13 +293,21 @@ def save_scenario(
         "body": list(central.centre),
         "food": [],
         "obstacles": [],
+        "hazards": [],
         "arms": [],
     }
     for obj in environment.objects:
         entry = {"position": list(obj.centre), "radius": obj.radius}
         if obj.kind is ObjectKind.FOOD:
             entry["id"] = f"food-{obj.identifier}"
-        data["food" if obj.kind is ObjectKind.FOOD else "obstacles"].append(entry)
+        collection = {
+            ObjectKind.FOOD: "food",
+            ObjectKind.OBSTACLE: "obstacles",
+            ObjectKind.HAZARD: "hazards",
+        }[obj.kind]
+        if obj.kind is ObjectKind.HAZARD:
+            entry.update(severity=obj.severity, detection_range=obj.detection_range)
+        data[collection].append(entry)
     for number, arm in enumerate(central.arms, 1):
         parameters = arm.controller.arm.parameters
         entry = {

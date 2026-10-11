@@ -14,6 +14,7 @@ from octopus_controller.avoidance import (
     steer_around_obstacles,
 )
 from octopus_controller.geometry import Point, pose_points, validate_point
+from octopus_controller.hazards import HazardResponse
 from octopus_controller.segment_control import SegmentRequest, request_start, turn_segment
 from octopus_controller.sensing import ObjectKind, WorldObject, detect_contacts
 
@@ -106,6 +107,7 @@ class ReachController:
         """
         self.avoiding = False
         self.blocked = False
+        self.hazard = HazardResponse()
         self.arm = arm
         positions = arm.points
         heading = 0.0
@@ -137,6 +139,8 @@ class ReachController:
     @property
     def status(self) -> str:
         """Describe progress without claiming all in-range targets are reachable."""
+        if self.hazard.state != "Reaching":
+            return self.hazard.state
         if self.blocked:
             return "Blocked"
         if self.avoiding:
@@ -163,22 +167,27 @@ class ReachController:
             raise ValueError("Elapsed seconds must be finite and non-negative")
         if elapsed_seconds == 0:
             return
+        self.hazard.sense(self.arm.points, objects, elapsed_seconds)
         obstacles = tuple(obj for obj in objects if obj.kind is ObjectKind.OBSTACLE)
         self.blocked = False
         self.avoiding = False
 
         # No route can put the tip inside a solid obstacle. Keep the assignment
         # intact so moving the obstacle or target lets the arm resume naturally.
-        if any(
+        if self.hazard.state == "Reaching" and any(
             hypot(self.target[0] - obj.centre[0], self.target[1] - obj.centre[1])
             < obj.radius + ARM_CLEARANCE
             for obj in obstacles
         ):
             self.blocked = True
             return
-        if self.distance <= REACH_TOLERANCE and not any(
-            contact.kind is ObjectKind.OBSTACLE
-            for contact in detect_contacts(self.arm.points, obstacles)
+        if (
+            self.hazard.state == "Reaching"
+            and self.distance <= REACH_TOLERANCE
+            and not any(
+                contact.kind is ObjectKind.OBSTACLE
+                for contact in detect_contacts(self.arm.points, obstacles)
+            )
         ):
             return
 
@@ -198,6 +207,11 @@ class ReachController:
                 positions[index], goal, parameters.segment_length, obstacles
             )
             self.avoiding |= changed
+
+        end_goals = [
+            self.hazard.steer(i, positions[i], positions[i + 1], goal, parameters.segment_length)
+            for i, goal in enumerate(end_goals)
+        ]
 
         next_requests = []
         heading = 0.0

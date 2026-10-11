@@ -254,7 +254,7 @@ function parameters(value, base, location) {
 export function parseScenario(text) {
   const data = mapping(
     decodeJSON(text),
-    ['version', 'name', 'body', 'defaults', 'food', 'obstacles', 'arms'],
+    ['version', 'name', 'body', 'defaults', 'food', 'obstacles', 'hazards', 'arms'],
     'Scenario',
   );
   // Presence checks below distinguish an omitted default from explicit null.
@@ -279,13 +279,18 @@ export function parseScenario(text) {
   for (const [collection, kind] of [
     ['food', ObjectKind.FOOD],
     ['obstacles', ObjectKind.OBSTACLE],
+    ['hazards', ObjectKind.HAZARD],
   ]) {
     const entries = array(Object.hasOwn(data, collection) ? data[collection] : [], collection);
     entries.forEach((raw, index) => {
       const location = `${collection}[${index}]`;
       const obj = mapping(
         raw,
-        kind === ObjectKind.FOOD ? ['position', 'radius', 'id'] : ['position', 'radius'],
+        kind === ObjectKind.FOOD
+          ? ['position', 'radius', 'id']
+          : kind === ObjectKind.HAZARD
+            ? ['position', 'radius', 'severity', 'detection_range']
+            : ['position', 'radius'],
         location,
       );
       const position = point(obj.position, `${location}.position`);
@@ -301,7 +306,18 @@ export function parseScenario(text) {
         foodPositions.set(obj.id, position);
       }
       // buildScenario adds in this same order, reproducing stable numeric IDs.
-      objects.push(worldObject(objects.length + 1, position, kind, radius));
+      objects.push(
+        worldObject(
+          objects.length + 1,
+          position,
+          kind,
+          radius,
+          Object.hasOwn(obj, 'severity') ? number(obj.severity, `${location}.severity`) : 0.5,
+          Object.hasOwn(obj, 'detection_range')
+            ? number(obj.detection_range, `${location}.detection_range`)
+            : 24,
+        ),
+      );
     });
   }
   // Omitted arms still exist, inherit defaults and start idle. Explicit entries
@@ -356,7 +372,8 @@ export function parseScenario(text) {
 export function buildScenario(scenario) {
   const central = new CentralController(scenario.body),
     environment = new Environment();
-  for (const obj of scenario.objects) environment.add(obj.centre, obj.kind, obj.radius);
+  for (const obj of scenario.objects)
+    environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detectionRange);
   // Rebuild instead of reusing previous runtime instances: moved objects,
   // in-flight requests, grips, timers and capture reports must not survive restart.
   central.arms.forEach((arm, i) => {

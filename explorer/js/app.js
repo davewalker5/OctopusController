@@ -158,7 +158,7 @@ function readout() {
       : 'Food held'
     : arm.controller.status;
   $('arm-detail').textContent =
-    `${goal} · ${arm.contacts.length} contacts${arm.grip ? ` · food ${arm.grip.objectId}` : ` · ${arm.controller.distance.toFixed(1)} px to target`}`;
+    `${goal} · hazard severity ${arm.controller.hazard.severity.toFixed(2)} · encounters ${arm.controller.hazard.encounters} · ${arm.contacts.length} contacts${arm.grip ? ` · food ${arm.grip.objectId}` : ` · ${arm.controller.distance.toFixed(1)} px to target`}`;
   $('destination-label').textContent = `${arm.grip ? 'Food' : 'Tip'} destination · pixels`;
   root.querySelector('[data-action="retract"]').disabled = !arm.grip;
   root.querySelector('[data-action="release"]').disabled = !arm.grip;
@@ -515,7 +515,7 @@ canvas.addEventListener('pointerdown', (event) => {
   const point = view.point(event);
   // Placement is deliberately one-shot, then returns to target assignment.
   // This branch must not also retarget an arm to the newly created object.
-  if (tool === 'Food' || tool === 'Obstacle') {
+  if (tool === 'Food' || tool === 'Obstacle' || tool === 'Hazard') {
     selectedObject = simulation.environment.add(point, tool);
     syncObjectFields();
     setTool('target');
@@ -581,7 +581,7 @@ root.addEventListener('keydown', (event) => {
   } else if (key === 'd') restart();
   else if ({ r: 'reset', x: 'idle', t: 'retract', g: 'release' }[key])
     armAction({ r: 'reset', x: 'idle', t: 'retract', g: 'release' }[key]);
-  else if (key === 'f' || key === 'o') setTool(key === 'f' ? 'Food' : 'Obstacle');
+  else if (['f', 'o', 'h'].includes(key)) setTool({ f: 'Food', o: 'Obstacle', h: 'Hazard' }[key]);
   else if (key === 'delete') deleteObject();
   else handled = false;
   if (handled) event.preventDefault();

@@ -562,3 +562,17 @@ def test_rename_blank_cancel_and_quit():
     assert press(application, pygame.K_ESCAPE)
     assert application.name_prompt is None
     assert application.scenario_name == "Empty scenario"
+
+
+def test_hazard_placement_preserves_assignment():
+    """H places a traversable hazard without redirecting the selected arm."""
+    from octopus_controller.sensing import ObjectKind
+
+    application = Application()
+    target = application.controller.target
+    press(application, pygame.K_h)
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(600, 300)))
+    hazard = application.environment.objects[-1]
+    assert hazard.kind is ObjectKind.HAZARD
+    assert hazard.centre == (600, 300)
+    assert application.controller.target == target

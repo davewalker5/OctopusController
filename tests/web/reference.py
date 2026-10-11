@@ -22,7 +22,8 @@ def snapshot(central, environment):
             [r.arm_index, r.object_id, r.simulation_seconds] for r in central.capture_reports
         ],
         "objects": [
-            [o.identifier, list(o.centre), o.kind.value, o.radius] for o in environment.objects
+            [o.identifier, list(o.centre), o.kind.value, o.radius, o.severity, o.detection_range]
+            for o in environment.objects
         ],
         "arms": [
             {
@@ -32,6 +33,12 @@ def snapshot(central, environment):
                 "active": a.active,
                 "state": a.state.value,
                 "status": a.controller.status,
+                "hazard": [
+                    a.controller.hazard.state,
+                    a.controller.hazard.severity,
+                    a.controller.hazard.encounters,
+                    a.controller.hazard.exposure_seconds,
+                ],
                 "grip": None
                 if a.grip is None
                 else [a.grip.object_id, a.grip.segment_index, a.grip.offset],
@@ -137,7 +144,14 @@ else:
         json.dumps(
             {
                 "traces": {
-                    name: trace(name) for name in ("two-targets", "behaviour-showcase", "grasp")
+                    name: trace(name)
+                    for name in (
+                        "two-targets",
+                        "behaviour-showcase",
+                        "local-hazard",
+                        "local-obstacle",
+                        "grasp",
+                    )
                 },
                 "geometry": geometry_cases(),
             }

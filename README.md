@@ -33,6 +33,7 @@ The project currently explores five progressively more sophisticated capabilitie
 3. **Local sensing** — allowing individual arms to respond to objects detected in their immediate environment
 4. **Obstacle avoidance** — modifying arm movements in response to obstacles encountered while reaching towards a target
 5. **Grasping** — demonstrating object interaction through the coordinated positioning and curling of an arm
+6. **Local Hazards and Recoil** - detection of hazards by the arms with recoil interrupting local reaching
 
 Together, these demonstrations illustrate a progression from simple movement control towards more complex, environmentally responsive behaviour.
 
@@ -69,6 +70,18 @@ _In memory of Charles — who demonstrated that an octopus may have more interes
 ## Getting Started
 
 Please see the [Wiki](https://github.com/davewalker5/OctopusController/wiki) for the user guide, controls and further details.
+
+## Web Explorer
+
+A standalone browser version is available in [`explorer/`](explorer/README.md), with the same distributed arm control, sensing, avoidance, grasping and JSON scenarios as the Python application. It uses the Field Notes Chromatophore Explorer's visual style and supports keyboard, mouse and touch controls.
+
+From the repository root, start a local static server:
+
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+Open [the local explorer](http://127.0.0.1:8765/explorer/). See the [Explorer README](explorer/README.md) for controls, testing and static hosting instructions. Publication to Field Notes is a separate step.
 
 ## Authors
 

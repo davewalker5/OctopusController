@@ -185,10 +185,14 @@ class Application:
                     if event.key == pygame.K_TAB
                     else event.key - pygame.K_1
                 )
-            elif event.key in (pygame.K_f, pygame.K_o):
+            elif event.key in (pygame.K_f, pygame.K_o, pygame.K_h):
                 # Placement is a one-click tool, avoiding accidental target changes
                 # when the user intends to add something for an arm to feel.
-                kind = ObjectKind.FOOD if event.key == pygame.K_f else ObjectKind.OBSTACLE
+                kind = {
+                    pygame.K_f: ObjectKind.FOOD,
+                    pygame.K_o: ObjectKind.OBSTACLE,
+                    pygame.K_h: ObjectKind.HAZARD,
+                }[event.key]
                 self.placement = None if self.placement is kind else kind
                 self.dragging = False
                 self.dragging_object = False

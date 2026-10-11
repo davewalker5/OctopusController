@@ -44,7 +44,14 @@ function snapshot(central, environment) {
     seconds: central.simulationSeconds,
     count: central.captureCount,
     reports: central.captureReports.map((r) => [r.armIndex, r.objectId, r.simulationSeconds]),
-    objects: environment.objects.map((o) => [o.identifier, o.centre, o.kind, o.radius]),
+    objects: environment.objects.map((o) => [
+      o.identifier,
+      o.centre,
+      o.kind,
+      o.radius,
+      o.severity,
+      o.detectionRange,
+    ]),
     arms: central.arms.map((a) => ({
       angles: a.controller.arm.angles,
       points: a.controller.arm.points,
@@ -52,6 +59,12 @@ function snapshot(central, environment) {
       active: a.active,
       state: a.state,
       status: a.controller.status,
+      hazard: [
+        a.controller.hazard.state,
+        a.controller.hazard.severity,
+        a.controller.hazard.encounters,
+        a.controller.hazard.exposureSeconds,
+      ],
       grip: a.grip ? [a.grip.objectId, a.grip.segmentIndex, a.grip.offset] : null,
       contacts: a.contacts.map((c) => [c.segmentIndex, c.objectId, c.kind, c.position]),
       requests: a.controller.requests.map((r) => [r.start, r.heading]),
@@ -277,4 +290,40 @@ test('invalid model durations do not mutate any arm', () => {
   for (const duration of [-1, NaN, Infinity])
     assert.throws(() => sim.central.step(duration, sim.environment));
   close(snapshot(sim.central, sim.environment), before);
+});
+
+test('hazards recoil locally, preserve the objective and resume without exposure', () => {
+  const { central, environment } = buildScenario(
+    parseScenario(readFileSync('scenarios/local-hazard.json', 'utf8')),
+  );
+  const arm = central.arm(2),
+    target = [...arm.controller.target],
+    states = new Set();
+  for (let i = 0; i < 1200; i++) {
+    central.step(1 / 120, environment);
+    states.add(arm.controller.status);
+  }
+  assert.ok(states.has('Recoiling'));
+  assert.ok(states.has('Reassessing'));
+  assert.ok(arm.controller.distance <= 2);
+  assert.deepEqual(arm.controller.target, target);
+  assert.equal(arm.controller.hazard.encounters, 1);
+  assert.equal(arm.controller.hazard.exposureSeconds, 0);
+  environment.move(2, [600, 600]);
+  assert.equal(environment.objects[1].severity, 0.5);
+  assert.equal(environment.objects[1].detectionRange, 24);
+});
+
+test('hazard scenario validation rejects invalid severity and range', () => {
+  for (const entry of [
+    { severity: 0 },
+    { severity: 1.1 },
+    { severity: true },
+    { detection_range: -1 },
+    { detection_range: null },
+  ]) {
+    assert.throws(() =>
+      parseScenario(JSON.stringify({ version: 1, hazards: [{ position: [0, 0], ...entry }] })),
+    );
+  }
 });

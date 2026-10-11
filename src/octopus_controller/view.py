@@ -94,8 +94,15 @@ def draw_scene(
     owners = {arm.grip.object_id: index for index, arm in enumerate(central.arms) if arm.grip}
     for obj in objects:
         colour = (131, 209, 120) if obj.kind is ObjectKind.FOOD else (229, 155, 105)
+        if obj.kind is ObjectKind.HAZARD:
+            colour = (240, 100, 160)
+            pygame.draw.circle(screen, colour, obj.centre, obj.radius + obj.detection_range, 1)
         pygame.draw.circle(screen, colour, obj.centre, obj.radius, 2)
-        label = font.render("F" if obj.kind is ObjectKind.FOOD else "O", True, colour)
+        label = font.render(
+            "H" if obj.kind is ObjectKind.HAZARD else "F" if obj.kind is ObjectKind.FOOD else "O",
+            True,
+            colour,
+        )
 
         # Keep the type label outside the circle: a target at its centre should
         # not cover the letter that distinguishes food from an obstacle.
@@ -264,7 +271,9 @@ def draw_sidebar(
             pygame.draw.rect(screen, (39, 61, 77), row, border_radius=5)
             pygame.draw.rect(screen, ARM_COLOURS[index], row, width=1, border_radius=5)
         pygame.draw.circle(screen, ARM_COLOURS[index], (row.left + 10, row.centery), 3)
-        label = font.render(f"{index + 1}  {arm.state.value}", True, ARM_COLOURS[index])
+        state_label = f"{index + 1}  {arm.state.value}"
+        state_font = font if font.size(state_label)[0] <= row.width - 24 else shortcuts_font
+        label = state_font.render(state_label, True, ARM_COLOURS[index])
         screen.blit(label, (row.left + 20, row.top + 4))
 
     selected = central.arm(selected_index)
@@ -311,7 +320,14 @@ def draw_sidebar(
     pygame.draw.line(screen, (39, 56, 72), (808, top + 312), (1086, top + 312))
     screen.blit(
         shortcuts_font.render(
-            f"Sensors  {sensor_count}/{parameters.segment_count}  /  {kinds}", True, MUTED
+            (
+                f"Hazard {controller.hazard.severity:.2f}"
+                f" / encounters {controller.hazard.encounters}"
+                if controller.hazard.encounters
+                else f"Sensors  {sensor_count}/{parameters.segment_count}  /  {kinds}"
+            ),
+            True,
+            MUTED,
         ),
         (808, top + 321),
     )
@@ -334,7 +350,7 @@ def draw_sidebar(
         ("T", "Retract food", selected.grip is not None),
         ("G", "Release food", selected.grip is not None),
         ("F + click", "Place food", True),
-        ("O + click", "Place obstacle", True),
+        ("O / H + click", "Obstacle / hazard", True),
         ("Right drag", "Move object", True),
         ("Del", "Remove object", True),
         ("Space", "Pause / resume", True),

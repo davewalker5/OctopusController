@@ -52,6 +52,8 @@ export class ControlledArm {
    * @returns {string} Human-readable local activity state.
    */
   get state() {
+    if (this.active && this.controller.hazard.state !== 'Reaching')
+      return this.controller.hazard.state;
     if (this.active && this.controller.blocked) return 'Blocked';
     if (this.active && this.controller.avoiding) return 'Avoiding';
     if (this.grip) return !this.active ? 'Holding' : this.retracting ? 'Retracting' : 'Carrying';
@@ -188,7 +190,10 @@ export class ControlledArm {
       this.carry(seconds, environment);
       return null;
     }
-    const candidate = this.active ? graspCandidate(this.contacts, unavailable) : null;
+    const hazard = this.controller.hazard;
+    const aversive =
+      hazard.state !== 'Reaching' || hazard.nearby(this.controller.arm.points, objects);
+    const candidate = this.active && !aversive ? graspCandidate(this.contacts, unavailable) : null;
     if (!candidate) {
       this.candidate = null;
       this.contactSeconds = 0;

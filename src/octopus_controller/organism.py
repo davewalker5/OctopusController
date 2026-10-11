@@ -29,6 +29,9 @@ RETRACT_DISTANCE = 40.0  # Pixels outward from the fixed arm attachment.
 class ArmState(Enum):
     """Observable local movement, contact and grasp states."""
 
+    RECOILING = "Recoiling"
+    AVOIDING_HAZARD = "Avoiding hazard"
+    REASSESSING = "Reassessing"
     GRASPING = "Grasping"
     HOLDING = "Holding"
     CARRYING = "Carrying"
@@ -66,6 +69,8 @@ class ControlledArm:
         """Report movement constraints first, then contact and assignment progress."""
         # Blocking does not cancel an assignment. Keep sensing available in the
         # contacts list even when the status explains why movement has stopped.
+        if self.active and self.controller.hazard.state != "Reaching":
+            return ArmState(self.controller.hazard.state)
         if self.active and self.controller.blocked:
             return ArmState.BLOCKED
         if self.active and self.controller.avoiding:
@@ -218,7 +223,11 @@ class ControlledArm:
             self._carry(elapsed_seconds, environment)
             return None
 
-        candidate = grasp_candidate(self.contacts, unavailable) if self.active else None
+        hazard = self.controller.hazard
+        aversive = hazard.state != "Reaching" or hazard.nearby(self.controller.arm.points, objects)
+        candidate = (
+            grasp_candidate(self.contacts, unavailable) if self.active and not aversive else None
+        )
         if candidate is None:
             self._candidate = None
             self._contact_seconds = 0.0
