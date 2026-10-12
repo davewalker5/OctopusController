@@ -26,7 +26,7 @@ The objective is not to reproduce the octopus nervous system in complete biologi
 
 ### What the simulation demonstrates
 
-The project currently explores five progressively more sophisticated capabilities:
+The project currently explores eight progressively more sophisticated capabilities:
 
 1. **Single-arm control** — controlling the movement and curvature of an individual flexible arm towards a target
 2. **Multi-arm control** — extending the control system to eight arms capable of operating simultaneously
@@ -35,6 +35,7 @@ The project currently explores five progressively more sophisticated capabilitie
 5. **Grasping** — demonstrating object interaction through the coordinated positioning and curling of an arm
 6. **Local Hazards and Recoil** - detection of hazards by the arms with recoil interrupting local reaching
 7. **Escalation** - priority signalling of hazards with escalation to the central controller
+8. **Conflict resolution** — explicit priorities for safety, grip, shared targets and incidental discoveries
 
 Together, these demonstrations illustrate a progression from simple movement control towards more complex, environmentally responsive behaviour.
 
@@ -71,18 +72,6 @@ _In memory of Charles — who demonstrated that an octopus may have more interes
 ## Getting Started
 
 Please see the [Wiki](https://github.com/davewalker5/OctopusController/wiki) for the user guide, controls and further details.
-
-## Web Explorer
-
-A standalone browser version is available in [`explorer/`](explorer/README.md), with the same distributed arm control, sensing, avoidance, grasping and JSON scenarios as the Python application. It uses the Field Notes Chromatophore Explorer's visual style and supports keyboard, mouse and touch controls.
-
-From the repository root, start a local static server:
-
-```sh
-python3 -m http.server 8765 --bind 127.0.0.1
-```
-
-Open [the local explorer](http://127.0.0.1:8765/explorer/). See the [Explorer README](explorer/README.md) for controls, testing and static hosting instructions. Publication to Field Notes is a separate step.
 
 ## Authors
 

@@ -8,11 +8,13 @@ Timers use simulation seconds, so callers must not advance them while paused.
 """
 
 from dataclasses import replace
-from math import hypot
+from math import dist, hypot
 
 from octopus_controller.avoidance import steer_around_obstacles
 from octopus_controller.geometry import Point, closest_point
 from octopus_controller.sensing import SENSOR_RADIUS, ObjectKind, WorldObject
+
+RECOIL_SEVERITY = 0.4  # Lower severity uses local steering without a timed recoil.
 
 
 class HazardResponse:
@@ -106,7 +108,7 @@ class HazardResponse:
             # These are experimental thresholds: below 0.4, steer without a
             # discrete recoil. Otherwise inhibit attraction for 0.25 + 0.9*s
             # seconds. A new encounter may extend, but never shorten, a recoil.
-            if new_severity >= 0.4:
+            if new_severity >= RECOIL_SEVERITY:
                 self._remaining = max(self._remaining, 0.25 + new_severity * 0.9)
 
         self._seen |= detected
@@ -170,11 +172,23 @@ class HazardResponse:
         local = self._local.get(index, ())
         if not local or self.state == "Reaching":
             return goal
-        if self.state == "Recoiling":
+        # Boundary waypoints can pull an already-penetrating link sideways
+        # through a mild hazard. Such hazards have no timed recoil, so keep an
+        # outward request until the sensing strip clears them. Stronger hazards
+        # retain their timed recoil followed by boundary steering.
+        penetrating = [
+            obj
+            for obj in local
+            if obj.severity < RECOIL_SEVERITY
+            and dist(closest_point(start, end, obj.centre), obj.centre) < obj.radius + SENSOR_RADIUS
+        ]
+        if self.state == "Recoiling" or penetrating:
             # Let the most severe local stimulus dominate instead of allowing
             # opposing repulsion vectors to cancel. Equal severities retain the
             # first observation, keeping the choice deterministic.
-            hazard = max(local, key=lambda obj: obj.severity)
+            hazard = max(
+                local if self.state == "Recoiling" else penetrating, key=lambda obj: obj.severity
+            )
             site = closest_point(start, end, hazard.centre)
             dx, dy = site[0] - hazard.centre[0], site[1] - hazard.centre[1]
             distance = hypot(dx, dy)

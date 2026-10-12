@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pygame
 
+from octopus_controller.activity import ActivityHistory
 from octopus_controller.dialogs import ScenarioNamePrompt, ScenarioPicker
 from octopus_controller.model import ReachController
 from octopus_controller.organism import ARM_COUNT, CentralController
@@ -15,12 +16,22 @@ from octopus_controller.sensing import Environment, ObjectKind
 from octopus_controller.view import (
     CLEAR_SCENARIO_BUTTON,
     HEADER_ICON_SIZE,
+    HISTORY_ARM,
+    HISTORY_BUTTON,
+    HISTORY_CATEGORY,
+    HISTORY_CLOSE,
+    HISTORY_LATEST,
+    HISTORY_ROWS,
     LOAD_SCENARIO_BUTTON,
+    MESSAGE_PANEL,
     SAVE_SCENARIO_BUTTON,
     SCENARIO_NAME_BUTTON,
     WINDOW_SIZE,
     WORLD,
+    SceneCamera,
+    draw_history,
     draw_scene,
+    history_lines,
 )
 
 SIMULATION_STEP = 1 / 120
@@ -34,6 +45,12 @@ class Application:
     def __init__(self, scenario: Scenario | None = None) -> None:
         """Create an empty setup or a paused scenario without opening a display."""
         self.scenario = scenario
+        self.history_open = False
+        self.history_arm = None
+        self.history_category = "All"
+        self.history_was_paused = True
+        self.message_scroll: int | None = None
+        self.camera = SceneCamera()
         self.name_override: str | None = None
         self.name_prompt: ScenarioNamePrompt | None = None
         self.save_notice: str | None = None
@@ -44,6 +61,7 @@ class Application:
         self.picker: ScenarioPicker | None = None
         self.central = CentralController(BODY_CENTRE)
         self.selected_index = 0
+        self.playback_speed = 1
         self.paused = False
         self.dragging = False
         self.accumulator = 0.0
@@ -79,12 +97,69 @@ class Application:
         self.scenario = scenario
         self.name_override = None
         self.central, self.environment = central, environment
+        self.camera = SceneCamera.fit(self.central)
+        self.message_scroll = None
+        self.history_open = False
+        self.activity = ActivityHistory(self.central)
         self.scenario_directory = path.parent
         self.paused = True
         self.selected_index = 0
         self.selected_object = None
         self.placement = None
         self.accumulator = 0.0
+
+    def _history_event(self, event):
+        """Consume inspection input without leaking mouse or keyboard edits to the scene.
+
+        :param event: Pygame input received while the history overlay is open.
+        :return: None; closing restores the playback state from before inspection.
+        """
+        close = event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
+        rows = 0
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                if HISTORY_CLOSE.collidepoint(event.pos):
+                    close = True
+                elif HISTORY_ARM.collidepoint(event.pos):
+                    self.history_arm = (
+                        0
+                        if self.history_arm is None
+                        else (self.history_arm + 1 if self.history_arm < 7 else None)
+                    )
+                    self.message_scroll = None
+                elif HISTORY_CATEGORY.collidepoint(event.pos):
+                    choices = ("All", "Food", "Safety", "Blocked", "Conflict")
+                    self.history_category = choices[
+                        (choices.index(self.history_category) + 1) % len(choices)
+                    ]
+                    self.message_scroll = None
+                elif HISTORY_LATEST.collidepoint(event.pos):
+                    self.message_scroll = None
+            elif event.button in (4, 5):
+                rows = -3 if event.button == 4 else 3
+        elif event.type == pygame.MOUSEWHEEL:
+            rows = event.y * (3 if getattr(event, "flipped", False) else -3)
+        elif event.type == pygame.KEYDOWN:
+            rows = {
+                pygame.K_UP: -1,
+                pygame.K_DOWN: 1,
+                pygame.K_PAGEUP: -HISTORY_ROWS,
+                pygame.K_PAGEDOWN: HISTORY_ROWS,
+            }.get(event.key, 0)
+            if event.key == pygame.K_END:
+                self.message_scroll = None
+        if rows:
+            pygame.font.init()
+            lines = history_lines(
+                self.activity, self.history_arm, self.history_category, pygame.font.Font(None, 18)
+            )
+            maximum = max(0, len(lines) - HISTORY_ROWS)
+            current = maximum if self.message_scroll is None else self.message_scroll
+            self.message_scroll = max(0, min(maximum, current + rows))
+        if close:
+            self.history_open = False
+            self.paused = self.history_was_paused
+            self.accumulator = 0.0
 
     def restart(self) -> None:
         """Restore initial conditions; loaded scenarios always restart paused."""
@@ -95,6 +170,7 @@ class Application:
             return
         else:
             self.central, self.environment = self.scenario.build()
+            self.camera = SceneCamera.fit(self.central)
             self.paused = True
         self.selected_object = None
         self.placement = None
@@ -102,17 +178,25 @@ class Application:
         self.selected_index = 0
         self.dragging = False
         self.accumulator = 0.0
+        self.message_scroll = None
+        self.history_open = False
+        self.activity = ActivityHistory(self.central)
         self.central.refresh_sensing(self.environment.objects)
 
     def clear(self) -> None:
         """Return to the empty startup setup with default, idle arms and no history."""
         self.scenario = None
+        self.message_scroll = None
+        self.history_open = False
         self.name_override = None
         self.name_prompt = None
         self.central = CentralController(BODY_CENTRE)
+        # Empty startup, Clear and Restart share the same framing as loaded scenes.
+        self.camera = SceneCamera.fit(self.central)
         for arm in self.central.arms:
             arm.idle()
         self.environment = Environment()
+        self.activity = ActivityHistory(self.central)
         self.paused = True
         self.selected_index = 0
         self.selected_object = None
@@ -135,6 +219,9 @@ class Application:
         """
         if event.type == pygame.QUIT:
             return False
+        if self.history_open:
+            self._history_event(event)
+            return True
         if self.name_prompt is not None:
             self.name_prompt.handle_event(event)
             if self.name_prompt.cancelled:
@@ -214,8 +301,12 @@ class Application:
             elif event.key == pygame.K_SPACE:
                 self.paused = not self.paused
                 self.accumulator = 0.0
+            elif event.key == pygame.K_v:
+                speeds = (1, 2, 4, 8)
+                self.playback_speed = speeds[(speeds.index(self.playback_speed) + 1) % len(speeds)]
             elif event.key == pygame.K_n and self.paused:
                 self.central.step(SIMULATION_STEP, self.environment)
+                self.activity.observe(self.central)
             elif event.key == pygame.K_d:
                 self.restart()
             else:
@@ -245,17 +336,28 @@ class Application:
         ):
             self.dragging = self.dragging_object = False
             self.name_prompt = ScenarioNamePrompt(self.scenario_name)
+        elif event.type == pygame.MOUSEBUTTONDOWN and MESSAGE_PANEL.collidepoint(event.pos):
+            if event.button == 1 and HISTORY_BUTTON.collidepoint(event.pos):
+                self.history_was_paused = self.paused
+                self.paused = True
+                self.history_open = True
+                self.dragging = self.dragging_object = False
+                self.accumulator = 0.0
+                self.message_scroll = None
+        elif event.type == pygame.MOUSEWHEEL:
+            pass  # The stable summary cannot be scrolled out of view.
         elif event.type == pygame.MOUSEBUTTONDOWN and WORLD.collidepoint(event.pos):
+            point = self.camera.unproject(event.pos)
             if event.button == 1:
                 self.dragging_object = False
                 if self.placement is not None:
-                    self.selected_object = self.environment.add(event.pos, self.placement)
+                    self.selected_object = self.environment.add(point, self.placement)
                     self.placement = None
                 else:
                     self.dragging = True
-                    self.central.assign_reach(self.selected_index, event.pos)
+                    self.central.assign_reach(self.selected_index, point)
             elif event.button == 3:
-                self.selected_object = self.environment.pick(event.pos)
+                self.selected_object = self.environment.pick(point)
                 self.dragging_object = self.selected_object is not None
                 self.dragging = False
         elif event.type == pygame.MOUSEBUTTONUP:
@@ -270,15 +372,17 @@ class Application:
             # Keep target and object centres visible when a drag leaves the world.
             x = max(WORLD.left, min(WORLD.right - 1, event.pos[0]))
             y = max(WORLD.top, min(WORLD.bottom - 1, event.pos[1]))
+            point = self.camera.unproject((x, y))
             if self.dragging_object and self.selected_object is not None:
                 self.central.release_object(self.selected_object)
-                self.environment.move(self.selected_object, (x, y))
+                self.environment.move(self.selected_object, point)
             elif self.dragging:
-                self.central.assign_reach(self.selected_index, (x, y))
+                self.central.assign_reach(self.selected_index, point)
 
         # Scene and geometry edits should be inspectable even while paused. This
         # refresh reads sensors only; it never advances the reaching controller.
         self.central.refresh_sensing(self.environment.objects)
+        self.activity.observe(self.central)
         return True
 
     def _adjust_parameters(self, key: int) -> None:
@@ -314,14 +418,22 @@ class Application:
 
         :param elapsed_seconds: Real frame duration in seconds from the display clock.
         """
-        if self.paused or self.picker is not None or self.name_prompt is not None:
+        if (
+            self.paused
+            or self.history_open
+            or self.picker is not None
+            or self.name_prompt is not None
+        ):
             return
 
         # Fixed ticks make the solver independent of rendering frequency. Limiting
         # catch-up avoids a sudden jump after moving the window or a debugger pause.
-        self.accumulator += min(elapsed_seconds, MAXIMUM_FRAME_TIME)
+        # Scale wall time, never the solver tick: hazard dwell, arbitration and
+        # collision checks therefore follow exactly the same sequence at any speed.
+        self.accumulator += min(elapsed_seconds, MAXIMUM_FRAME_TIME) * self.playback_speed
         while self.accumulator >= SIMULATION_STEP:
             self.central.step(SIMULATION_STEP, self.environment)
+            self.activity.observe(self.central)
             self.accumulator -= SIMULATION_STEP
 
 
@@ -385,6 +497,10 @@ def main(argv: list[str] | None = None) -> None:
                     shortcuts_font,
                     application.scenario_name,
                     application.load_error,
+                    application.message_scroll,
+                    application.camera,
+                    application.playback_speed,
+                    application.activity,
                 )
                 if application.save_notice:
                     screen.set_clip(WORLD)
@@ -395,6 +511,16 @@ def main(argv: list[str] | None = None) -> None:
                     application.picker.draw(screen, font)
                 if application.name_prompt is not None:
                     application.name_prompt.draw(screen, font)
+                if application.history_open:
+                    draw_history(
+                        screen,
+                        application.central,
+                        application.activity,
+                        shortcuts_font,
+                        application.history_arm,
+                        application.history_category,
+                        application.message_scroll,
+                    )
                 pygame.display.flip()
     finally:
         # Release SDL resources even if an input or drawing error is raised.

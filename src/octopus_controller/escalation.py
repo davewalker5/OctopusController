@@ -96,6 +96,9 @@ class HazardSignaller:
         :param policy: Validated thresholds shared by the arms.
         """
         self.policy = policy
+        # Set by the scene arbiter; crossing this level must refresh an existing
+        # P100 report so the centre can distinguish a newly critical threat.
+        self.critical_severity = 1.0
         self._episodes: dict[int, _Episode] = {}
 
         # These readouts describe this tick's sensing, unlike reported priority,
@@ -195,7 +198,17 @@ class HazardSignaller:
             # moved positions. The centre learns only from explicit messages.
             # Comparing against the last report also prevents downgrades within
             # an episode; only a completed quiet interval releases that latch.
-            if priority > (episode.reported.priority if episode.reported else 0):
+            critical_upgrade = (
+                priority == 100
+                and episode.reported is not None
+                and obj.severity >= self.critical_severity > episode.reported.severity
+            )
+            if (
+                priority > (episode.reported.priority if episode.reported else 0)
+                or critical_upgrade
+            ):
+                if critical_upgrade:
+                    reason = "Critical severity"
                 episode.reported = HazardSignal(
                     identifier, obj.centre, obj.severity, priority, count, episode.exposure, reason
                 )
@@ -309,7 +322,7 @@ class PriorityReceiver:
         :param arm_index: Zero-based source arm identity.
         :param signals: New local observations, upgrades and clear messages.
         :param seconds: Current central simulation time for logging.
-        :param holding: Whether this arm holds food; grip arbitration is deferred.
+        :param holding: Whether this arm holds food; the separate arbiter resolves its grip.
         :return: Whether this arm should suspend its ordinary assignment.
         """
         before = self.withdrawing(arm_index)
@@ -349,10 +362,10 @@ class PriorityReceiver:
                 self.intervention_count += 1
 
             # Holding changes the explanatory command, not the priority. This
-            # receiver never releases a grip; that conflict remains unresolved
-            # until clearance or a later arbitration policy handles it.
+            # receiver never releases a grip; the conflict resolver applies that
+            # decision after all arms have sent their reports.
             action = (
-                ("hold grip; withdrawal pending" if holding else "withdraw locally")
+                ("resolve grip versus withdrawal" if holding else "withdraw locally")
                 if after
                 else "resume assignment"
             )

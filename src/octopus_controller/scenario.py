@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, replace
 from math import isfinite, radians
 from pathlib import Path
 
+from octopus_controller.conflicts import ConflictPolicy
 from octopus_controller.escalation import EscalationPolicy
 from octopus_controller.geometry import Point
 from octopus_controller.model import ArmParameters
@@ -20,6 +21,7 @@ class ArmSetup:
 
     parameters: ArmParameters
     target: Point | None = None
+    food_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -31,12 +33,13 @@ class Scenario:
     objects: tuple[WorldObject, ...]
     arms: tuple[ArmSetup, ...]
     escalation: EscalationPolicy = EscalationPolicy()
+    conflicts: ConflictPolicy = ConflictPolicy()
 
     def build(self) -> tuple[CentralController, Environment]:
         """Return a fresh scene with reset poses, sensing, time and capture state."""
         # Rebuild mutable runtime state rather than reusing a previous run: poses,
         # grips and capture history must never leak into a restart.
-        central = CentralController(self.body, self.escalation)
+        central = CentralController(self.body, self.escalation, self.conflicts)
         environment = Environment()
         for obj in self.objects:
             environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detection_range)
@@ -45,7 +48,7 @@ class Scenario:
             if setup.target is None:
                 arm.idle()
             else:
-                arm.assign_reach(setup.target)
+                arm.assign_reach(setup.target, setup.food_id)
 
         # Populate contact indicators immediately, even though playback starts paused.
         central.refresh_sensing(environment.objects)
@@ -145,6 +148,7 @@ def parse_scenario(value: object) -> Scenario:
             "hazards",
             "arms",
             "escalation",
+            "conflicts",
         },
         "Scenario",
     )
@@ -166,6 +170,7 @@ def parse_scenario(value: object) -> Scenario:
     # the numeric identities used by the simulation for contacts and grips.
     objects = []
     food_positions = {}
+    food_ids = {}
     for collection, kind in (
         ("food", ObjectKind.FOOD),
         ("obstacles", ObjectKind.OBSTACLE),
@@ -192,6 +197,7 @@ def parse_scenario(value: object) -> Scenario:
                 # Retain the exact ID: validation rejects blank labels but does not
                 # trim whitespace or change case when matching references.
                 food_positions[identifier] = position
+                food_ids[identifier] = len(objects) + 1
 
             # Stable insertion order reproduces these numeric IDs when build()
             # adds the objects to a fresh environment.
@@ -211,7 +217,7 @@ def parse_scenario(value: object) -> Scenario:
     arms = [ArmSetup(defaults) for _ in range(ARM_COUNT)]
     seen = set()
     for raw in _array(data.get("arms", []), "arms"):
-        arm = _mapping(raw, {"number", "parameters", "target"}, "Arm")
+        arm = _mapping(raw, {"number", "parameters", "target", "focus_food"}, "Arm")
         number = arm.get("number")
         if type(number) is not int or not 1 <= number <= ARM_COUNT:
             raise ValueError("Arm.number must be an integer between 1 and 8")
@@ -226,6 +232,7 @@ def parse_scenario(value: object) -> Scenario:
         # Omission means idle. An explicit null or empty target is an error, so
         # check presence rather than treating false-like values as omission.
         target = None
+        food_id = None
         if "target" in arm:
             assignment = _mapping(arm["target"], {"food", "position"}, f"Arm {number}.target")
 
@@ -243,11 +250,19 @@ def parse_scenario(value: object) -> Scenario:
                 # Resolve to the initial position, not a live object reference:
                 # moving or capturing food later does not retarget other arms.
                 target = food_positions[food]
+                food_id = food_ids[food]
             else:
                 target = _point(assignment["position"], f"Arm {number}.target.position")
 
         # File/UI arm numbers are one-based; the controller tuple is zero-based.
-        arms[number - 1] = ArmSetup(parameters, target)
+        if "focus_food" in arm:
+            focus = arm["focus_food"]
+            if target is None or not isinstance(focus, str) or focus not in food_ids:
+                raise ValueError("Arm.focus_food requires a target and a known food id")
+            if food_id is not None and food_id != food_ids[focus]:
+                raise ValueError("Arm.focus_food must match the named target food")
+            food_id = food_ids[focus]
+        arms[number - 1] = ArmSetup(parameters, target, food_id)
 
     # Publish only after every entry is valid. Tuples and frozen records detach
     # restart conditions from both the decoded JSON and the mutable running scene.
@@ -257,7 +272,13 @@ def parse_scenario(value: object) -> Scenario:
     policy = EscalationPolicy(
         **{key: _number(value, f"escalation.{key}") for key, value in raw_policy.items()}
     )
-    return Scenario(name, body, tuple(objects), tuple(arms), policy)
+    raw_conflicts = _mapping(
+        data.get("conflicts", {}), set(ConflictPolicy.__dataclass_fields__), "conflicts"
+    )
+    conflicts = ConflictPolicy(
+        **{key: _number(value, f"conflicts.{key}") for key, value in raw_conflicts.items()}
+    )
+    return Scenario(name, body, tuple(objects), tuple(arms), policy, conflicts)
 
 
 def _unique_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -314,6 +335,7 @@ def save_scenario(
         "hazards": [],
         "arms": [],
         "escalation": asdict(central.policy),
+        "conflicts": asdict(central.conflicts.policy),
     }
     for obj in environment.objects:
         entry = {"position": list(obj.centre), "radius": obj.radius}
@@ -342,6 +364,13 @@ def save_scenario(
             target = arm.carry_goal if arm.grip is not None else arm.controller.target
             if target is not None:
                 entry["target"] = {"position": list(target)}
+                if arm.goal_object is not None and any(
+                    obj.identifier == arm.goal_object and obj.kind is ObjectKind.FOOD
+                    for obj in environment.objects
+                ):
+                    # Preserve the fixed destination even if food has moved,
+                    # while retaining resource identity for conflict arbitration.
+                    entry["focus_food"] = f"food-{arm.goal_object}"
         data["arms"].append(entry)
     # Validate before creating a file, using the same strict contract as loading.
     parse_scenario(data)

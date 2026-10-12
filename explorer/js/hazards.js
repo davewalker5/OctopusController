@@ -10,6 +10,9 @@
 import { closestPoint, distance } from './geometry.js';
 import { steerAroundObstacles } from './avoidance.js';
 import { ObjectKind } from './sensing.js';
+// Match Python's recoil threshold and the sensing strip's radius in world pixels.
+const RECOIL_SEVERITY = 0.4,
+  SENSOR_RADIUS = 3;
 /**
  * One arm's aversive episode and per-segment observations.
  *
@@ -53,7 +56,7 @@ export class HazardResponse {
           (o) =>
             o.kind === ObjectKind.HAZARD &&
             distance(closestPoint(start, points[i + 1], o.centre), o.centre) <=
-              o.radius + o.detectionRange + 3,
+              o.radius + o.detectionRange + SENSOR_RADIUS,
         ),
       );
   }
@@ -81,7 +84,7 @@ export class HazardResponse {
       for (const obj of objects) {
         if (obj.kind !== ObjectKind.HAZARD) continue;
         const separation = distance(closestPoint(points[i], points[i + 1], obj.centre), obj.centre);
-        if (separation <= obj.radius + obj.detectionRange + 3) {
+        if (separation <= obj.radius + obj.detectionRange + SENSOR_RADIUS) {
           if (!fresh.has(i)) fresh.set(i, []);
           fresh.get(i).push(obj);
           detected.add(obj.identifier);
@@ -102,7 +105,8 @@ export class HazardResponse {
       // Experimental tuning: below 0.4 use deflection only; otherwise recoil
       // for 0.25 + 0.9*s seconds. A new encounter can extend an existing timer
       // but must not shorten a stronger response already in progress.
-      if (strength >= 0.4) this.remaining = Math.max(this.remaining, 0.25 + strength * 0.9);
+      if (strength >= RECOIL_SEVERITY)
+        this.remaining = Math.max(this.remaining, 0.25 + strength * 0.9);
     }
     detected.forEach((id) => this.seen.add(id));
     // Remove deleted hazards, but retain last-sensed positions for remaining
@@ -161,11 +165,20 @@ export class HazardResponse {
   steer(index, start, end, goal, length) {
     const local = this.local.get(index) ?? [];
     if (!local.length || this.state === 'Reaching') return goal;
-    if (this.state === 'Recoiling') {
+    // Mild hazards have no timed recoil: keep requesting outward escape while
+    // inside their sensing strip. Stronger hazards retain their timed response.
+    const penetrating = local.filter(
+      (o) =>
+        o.severity < RECOIL_SEVERITY &&
+        distance(closestPoint(start, end, o.centre), o.centre) < o.radius + SENSOR_RADIUS,
+    );
+    if (this.state === 'Recoiling' || penetrating.length) {
       // Let the strongest local stimulus dominate instead of allowing opposing
       // repulsion vectors to cancel. Ties keep the first observation for a
       // deterministic result matching Python's max selection.
-      const hazard = local.reduce((a, b) => (b.severity > a.severity ? b : a));
+      const hazard = (this.state === 'Recoiling' ? local : penetrating).reduce((a, b) =>
+        b.severity > a.severity ? b : a,
+      );
       const site = closestPoint(start, end, hazard.centre);
       let dx = site[0] - hazard.centre[0],
         dy = site[1] - hazard.centre[1],

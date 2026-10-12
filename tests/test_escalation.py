@@ -139,7 +139,7 @@ def test_high_withdraws_locally_then_resumes_original_assignment():
     assert arm.controller.distance <= 2
 
 
-def test_holding_arm_reports_but_never_loses_its_grip():
+def test_high_priority_withdrawal_releases_a_held_grip():
     central = CentralController((400, 460))
     for arm in central.arms:
         arm.idle()
@@ -151,10 +151,11 @@ def test_holding_arm_reports_but_never_loses_its_grip():
     environment.add(arm.controller.arm.points[3], ObjectKind.HAZARD, severity=0.9)
     before = arm.controller.arm.points
     central.step(0.01, environment)
-    assert arm.state.value == "Holding under alert"
-    assert arm.grip is not None
-    assert arm.controller.arm.points == before
-    assert any("hold grip; withdrawal pending" in m.text for m in central.priority.messages)
+    assert arm.state.value == "Withdrawing"
+    assert arm.grip is None
+    assert arm.controller.arm.points != before
+    assert central.conflicts.release_count == 1
+    assert any("resolve grip versus withdrawal" in m.text for m in central.priority.messages)
 
 
 def test_idle_arm_withdraws_without_turning_idle_into_a_reach_assignment():

@@ -52,7 +52,16 @@ function snapshot(central, environment) {
     r.signal.exposureSeconds,
     r.signal.reason,
   ];
+  const decision = (d) => [d.action, d.priority, d.conflict, d.reason, d.winner, d.scope];
   return {
+    conflicts: [
+      central.goal,
+      central.conflicts.conflictCount,
+      central.conflicts.releaseCount,
+      central.abandonedGoalCount,
+      central.conflicts.wholeWithdrawal,
+      central.conflicts.events.map((e) => [e.simulationSeconds, e.armIndex, decision(e.decision)]),
+    ],
     priority: [
       priority.goal,
       priority.reportCount,
@@ -78,6 +87,8 @@ function snapshot(central, environment) {
       points: a.controller.arm.points,
       target: a.controller.target,
       active: a.active,
+      decision: decision(a.decision),
+      focus: a.goalObject,
       notification: a.signaller.notification,
       withdrawal_goal: a.controller.withdrawalGoal,
       state: a.state,
@@ -116,7 +127,7 @@ function trace(name) {
   }
   // Clone each snapshot: angle arrays are replaced, but reports and scene evolve.
   const result = [structuredClone(snapshot(central, environment))];
-  for (let tick = 1; tick <= 600; tick++) {
+  for (let tick = 1; tick <= (name === 'reef-forage-extended' ? 1200 : 600); tick++) {
     if (name === 'grasp') {
       if (tick === 31) central.arm(0).assignReach([425, 435]);
       else if (tick === 80) environment.add([430, 442], ObjectKind.OBSTACLE, 9);
@@ -128,7 +139,7 @@ function trace(name) {
       } else if (tick === 300) environment.remove(1);
     }
     central.step(1 / 120, environment);
-    if ([1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600].includes(tick))
+    if ([1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600, 1200].includes(tick))
       result.push(structuredClone(snapshot(central, environment)));
   }
   return result;
@@ -180,6 +191,16 @@ test('Python parity: scenarios, ownership, carrying, obstacle edits and retracti
 test('strict file validation agrees with Python, including lexemes and duplicate keys', () => {
   const cases = [
     '{"version":1}',
+    '{"version":1,"conflicts":{"critical_severity":0.95,"target_tolerance":0}}',
+    '{"version":1,"conflicts":{"critical_severity":true}}',
+    '{"version":1,"conflicts":{"critical_severity":0}}',
+    '{"version":1,"conflicts":{"target_tolerance":-1}}',
+    '{"version":1,"conflicts":{"unknown":1}}',
+    '{"version":1,"conflicts":null}',
+    '{"version":1,"arms":[{"number":1,"focus_food":"missing"}]}',
+    '{"version":1,"food":[{"id":"a","position":[1,2]}],"arms":[{"number":1,"focus_food":"a","target":{"position":[3,4]}}]}',
+    '{"version":1,"food":[{"id":"a","position":[1,2]},{"id":"b","position":[3,4]}],"arms":[{"number":1,"focus_food":"a","target":{"food":"b"}}]}',
+
     '{"version":1,"name":"  "}',
     '{"version":1.0}',
     '{"version":true}',
@@ -225,7 +246,16 @@ test('strict file validation agrees with Python, including lexemes and duplicate
   });
 });
 test('bundled scenarios remain identical to the source files', () => {
-  for (const name of ['two-targets', 'behaviour-showcase'])
+  for (const name of [
+    'two-targets',
+    'behaviour-showcase',
+    'local-hazard',
+    'hazard-escalation',
+    'local-obstacle',
+    'competing-arms',
+    'food-vs-danger',
+    'discovery-vs-task',
+  ])
     assert.equal(
       readFileSync(`explorer/scenarios/${name}.json`, 'utf8'),
       readFileSync(`scenarios/${name}.json`, 'utf8'),
@@ -348,5 +378,33 @@ test('hazard scenario validation rejects invalid severity and range', () => {
     assert.throws(() =>
       parseScenario(JSON.stringify({ version: 1, hazards: [{ position: [0, 0], ...entry }] })),
     );
+  }
+});
+
+test('reef recovery clears the mild hazard and reports blocked withdrawal honestly', () => {
+  const states = trace('reef-forage-extended');
+  const arm = states.at(-1).arms[2],
+    tip = arm.points.at(-1);
+  assert.ok(Math.hypot(tip[0] - 556, tip[1] - 454) > 12);
+  assert.ok(arm.hazard[3] < 2);
+  assert.deepEqual(arm.target, states[0].arms[2].target);
+  const controlled = new CentralController([400, 460]).arm(2);
+  controlled.requestWithdrawal(true);
+  controlled.controller.blocked = true;
+  assert.equal(controlled.state, 'Withdrawal blocked');
+  assert.equal(controlled.controller.status, 'Blocked');
+});
+
+test('accelerated reef playback preserves the complete model sequence', () => {
+  const scenario = parseScenario(readFileSync('scenarios/reef-forage-extended.json', 'utf8'));
+  for (const speed of [2, 4, 8]) {
+    const normal = new Simulation(scenario),
+      fast = new Simulation(scenario);
+    normal.setPaused(false);
+    fast.setPaused(false);
+    fast.playbackSpeed = speed;
+    for (let i = 0; i < 60 * speed; i++) normal.advance(1 / 60);
+    for (let i = 0; i < 60; i++) fast.advance(1 / 60);
+    close(snapshot(fast.central, fast.environment), snapshot(normal.central, normal.environment));
   }
 });

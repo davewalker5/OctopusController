@@ -81,6 +81,13 @@
             <label for="scenario">Starting conditions</label
             ><select id="scenario">
               <option value="demo">Original demonstration</option>
+              <option value="reef-forage">Slow reef forage — eight arms</option>
+              <option value="reef-forage-extended">
+                Extended reef forage — hazards and competing goals
+              </option>
+              <option value="competing-arms">Competing arms</option>
+              <option value="food-vs-danger">Food versus danger</option>
+              <option value="discovery-vs-task">Discovery versus assigned task</option>
               <option value="hazard-escalation">High-priority hazard</option>
               <option value="local-hazard">Local hazard and recoil</option>
               <option value="local-obstacle">Obstacle comparison</option>
@@ -98,6 +105,13 @@
               ><button id="step" type="button">Step</button
               ><button id="restart" type="button">Restart</button>
             </div>
+            <label for="playback-speed">Playback speed</label>
+            <select id="playback-speed">
+              <option value="1">1× — normal</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+              <option value="8">8×</option>
+            </select>
             <p class="hint">Scenarios load paused. Restart restores the starting scene.</p>
           </section>
           <section class="card control-card">
@@ -107,11 +121,20 @@
             <ol id="priority-log" class="capture-log"></ol>
           </section>
           <section class="card control-card">
+            <p class="eyebrow">CONFLICT RESOLUTION</p>
+            <p id="conflict-counts">No conflict decisions</p>
+            <p class="hint">
+              Withdrawal 100 · avoidance 80 · grip 60 · reach 50 · discovery 20 · idle 0
+            </p>
+            <ol id="conflict-log" class="capture-log"></ol>
+          </section>
+          <section class="card control-card">
             <p class="eyebrow">02 / SELECTED ARM</p>
             <label for="selected-arm">Arm</label
             ><select id="selected-arm"></select>
             <div class="arm-readout">
-              <strong id="arm-state">Reaching</strong><span id="arm-detail"></span>
+              <strong id="arm-state">Reaching</strong><span id="arm-decision"></span
+              ><span id="arm-detail"></span>
             </div>
             <div class="button-grid">
               <button type="button" data-action="idle">Idle</button

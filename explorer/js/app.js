@@ -152,7 +152,7 @@ function readout() {
   $('clock').textContent =
     `${central.simulationSeconds.toFixed(2)} s · ${central.captureCount} captures`;
   $('arm-state').textContent = arm.state;
-  $('central-goal').textContent = `Central goal: ${central.priority.goal}`;
+  $('central-goal').textContent = `Central goal: ${central.goal}`;
   $('priority-counts').textContent =
     `${central.priority.reportCount} reports · ${central.priority.escalationCount} escalations · ${central.priority.interventionCount} interventions · ${central.priority.known.size} known reports`;
   const priorityText = central.priority.messages
@@ -168,6 +168,27 @@ function readout() {
       }),
     );
     $('priority-log').dataset.signature = JSON.stringify(priorityText);
+  }
+  $('arm-decision').textContent =
+    `Last decision · ${arm.decision.scope}: ${arm.decision.action} · priority ${arm.decision.priority}${arm.decision.reason ? ` · ${arm.decision.reason}` : ''}`;
+  $('conflict-counts').textContent =
+    `${central.conflicts.conflictCount} conflict decisions · ${central.conflicts.releaseCount} safety releases · ${central.abandonedGoalCount} abandoned carries`;
+  const conflictText = central.conflicts.events
+    .slice(-6)
+    .map(
+      (event) =>
+        `${event.simulationSeconds.toFixed(2)}s Arm ${event.armIndex + 1}: ${event.decision.action} (${event.decision.priority}) · ${event.decision.reason || 'Conflict cleared'}`,
+    );
+  // Events are transition-based; leave the accessible list intact between changes.
+  if ($('conflict-log').dataset.signature !== JSON.stringify(conflictText)) {
+    $('conflict-log').replaceChildren(
+      ...conflictText.map((text) => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        return item;
+      }),
+    );
+    $('conflict-log').dataset.signature = JSON.stringify(conflictText);
   }
   const goal = arm.grip
     ? arm.active
@@ -273,6 +294,7 @@ function installScenario(scenario, preset) {
   // Build before touching the live binding. A construction failure must leave
   // the existing experiment usable rather than exposing half a new scene.
   const next = new Simulation(scenario);
+  next.playbackSpeed = simulation.playbackSpeed;
   endDrag();
   simulation = next;
   selectedIndex = 0;
@@ -439,6 +461,9 @@ $('scenario-file').addEventListener('change', async () => {
 });
 // Both playback buttons call the same handler. Step uses the full simulation
 // tick and is also guarded by Simulation, not just by the disabled button.
+$('playback-speed').addEventListener('change', () => {
+  simulation.playbackSpeed = Number($('playback-speed').value);
+});
 $('play').addEventListener('click', playPause);
 $('scene-play').addEventListener('click', playPause);
 $('step').addEventListener('click', () => {

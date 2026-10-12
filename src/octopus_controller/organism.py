@@ -10,6 +10,13 @@ from dataclasses import dataclass
 from enum import Enum
 from math import cos, hypot, isfinite, pi, sin
 
+from octopus_controller.conflicts import (
+    IDLE,
+    ArmIntent,
+    ConflictDecision,
+    ConflictPolicy,
+    ConflictResolver,
+)
 from octopus_controller.escalation import EscalationPolicy, HazardSignaller, PriorityReceiver
 from octopus_controller.grasping import (
     CARRY_TOLERANCE,
@@ -18,7 +25,13 @@ from octopus_controller.grasping import (
     grasp_candidate,
 )
 from octopus_controller.model import Arm, ArmParameters, Point, ReachController, validate_point
-from octopus_controller.sensing import Contact, Environment, WorldObject, detect_contacts
+from octopus_controller.sensing import (
+    Contact,
+    Environment,
+    ObjectKind,
+    WorldObject,
+    detect_contacts,
+)
 
 ARM_COUNT = 8
 BODY_RADIUS = 32.0
@@ -30,7 +43,9 @@ RETRACT_DISTANCE = 40.0  # Pixels outward from the fixed arm attachment.
 class ArmState(Enum):
     """Observable local movement, contact and grasp states."""
 
+    YIELDING = "Yielding"
     WITHDRAWING = "Withdrawing"
+    WITHDRAWAL_BLOCKED = "Withdrawal blocked"
     ALERT_HOLD = "Holding under alert"
     RECOILING = "Recoiling"
     AVOIDING_HAZARD = "Avoiding hazard"
@@ -56,6 +71,7 @@ class ControlledArm:
         heading: float,
         target: Point,
         policy: EscalationPolicy = EscalationPolicy(),
+        conflicts: ConflictPolicy = ConflictPolicy(),
     ) -> None:
         """Create a radial arm with an initial reach assignment.
 
@@ -63,8 +79,14 @@ class ControlledArm:
         :param heading: Outward direction in clockwise radians.
         :param target: Initial target in world pixels.
         :param policy: Validated local reporting and escalation thresholds.
+        :param conflicts: Validated critical-threat and resource-claim settings.
         """
         self.signaller = HazardSignaller(policy)
+        self.signaller.critical_severity = conflicts.critical_severity
+        self.decision = ConflictDecision("Awaiting arbitration", IDLE)
+        self.yielding = False
+        self.goal_object: int | None = None
+        self.ignored_food: set[int] = set()
         self.withdrawal_requested = False
         self.initial_heading = heading
         self.controller = ReachController(Arm(base, DEFAULT_PARAMETERS, heading), target)
@@ -84,11 +106,13 @@ class ControlledArm:
         if self.withdrawal_requested:
             if self.grip is not None:
                 return ArmState.ALERT_HOLD
-            return ArmState.WITHDRAWING
-        if self.active and self.controller.hazard.state != "Reaching":
-            return ArmState(self.controller.hazard.state)
+            return ArmState.WITHDRAWAL_BLOCKED if self.controller.blocked else ArmState.WITHDRAWING
+        if self.yielding:
+            return ArmState.YIELDING
         if self.active and self.controller.blocked:
             return ArmState.BLOCKED
+        if self.active and self.controller.hazard.state != "Reaching":
+            return ArmState(self.controller.hazard.state)
         if self.active and self.controller.avoiding:
             return ArmState.AVOIDING
         if self.grip is not None:
@@ -111,7 +135,7 @@ class ControlledArm:
         The fixed body cannot retreat. An unladen arm instead draws its
         tip towards its base; local hazard and obstacle steering still apply.
         Preserve the current assignment so clear reports can resume it. A grip
-        stays attached and motion pauses: releasing it needs Phase 3 arbitration.
+        is released first when withdrawal wins arbitration.
 
         :param requested: Whether central priority currently suspends this arm.
         """
@@ -129,13 +153,69 @@ class ControlledArm:
             self._candidate = None
             self._contact_seconds = 0.0
 
-    def assign_reach(self, target: Point) -> None:
+    def intent(self, objects: tuple[WorldObject, ...]) -> ArmIntent:
+        """Summarise local task/resource claims without sending a map centrally.
+
+        An explicit food assignment outranks incidental discoveries. Coordinate
+        reaches retain the original opportunistic grasp behaviour. Ignored food
+        remains visible to sensors, but cannot interrupt grasp dwell.
+
+        :param objects: Current local sensing snapshot, used only to validate IDs.
+        :return: Immutable intention and locally observed resource summary.
+        """
+        existing = {obj.identifier for obj in objects}
+        if self.goal_object not in existing:
+            self.goal_object = None
+        self.ignored_food = {
+            contact.object_id
+            for contact in self.contacts
+            if contact.kind is ObjectKind.FOOD
+            and self.goal_object is not None
+            and contact.object_id != self.goal_object
+        }
+        candidate = grasp_candidate(self.contacts, self.ignored_food)
+        return ArmIntent(
+            self.active,
+            self.carry_goal or self.controller.target,
+            self.grip.object_id if self.grip else None,
+            self.goal_object,
+            candidate[0] if candidate else None,
+            self.signaller.severity > 0 or self.controller.hazard.state != "Reaching",
+            min(self.ignored_food) if self.ignored_food else None,
+        )
+
+    def apply_decision(self, decision: ConflictDecision) -> bool:
+        """Apply an arbitration command without prescribing any joint movements.
+
+        :param decision: Selected behaviour from the current arbitration pass.
+        :return: True if withdrawal released a held object in place.
+        """
+        released = decision.action == "Withdraw" and self.grip is not None
+        if released:
+            # A carry destination is meaningless once the payload is released.
+            # Leave this arm idle after retreat, preventing automatic recapture.
+            self.release()
+        self.decision = decision
+        self.yielding = decision.action == "Yield"
+        self.request_withdrawal(decision.action == "Withdraw")
+        if self.yielding:
+            self._candidate = None
+            self._contact_seconds = 0.0
+        return released
+
+    def assign_reach(self, target: Point, goal_object: int | None = None) -> None:
         """Assign a tip objective, or an object destination while carrying.
 
         :param target: Finite desired tip or held-object position in world pixels.
-        :raises ValueError: If target coordinates are invalid.
+        :param goal_object: Optional explicit food identity; other discoveries cannot replace it.
+        :raises ValueError: If target coordinates or the optional food identity are invalid.
         """
         validate_point(target)
+        if goal_object is not None and (type(goal_object) is not int or goal_object < 1):
+            raise ValueError("Food goal must be a positive object identity")
+        self.goal_object = goal_object
+        self.ignored_food.clear()
+        self.yielding = False
         if self.grip is not None:
             self.carry_goal = tuple(target)
             self.retracting = False
@@ -152,6 +232,7 @@ class ControlledArm:
         # Keep the old controller and messages, so resuming is a continuation,
         # not a sudden reset. The previous target is hidden while there is no task.
         self.active = False
+        self.yielding = False
         self._candidate = None
         self._contact_seconds = 0.0
 
@@ -161,7 +242,9 @@ class ControlledArm:
         :param parameters: Replacement geometry, or None to keep current settings.
         """
         was_active = self.active
+        goal_object = self.goal_object
         self.release()
+        self.goal_object = goal_object
         self.active = was_active
         previous = self.controller
         arm = Arm(
@@ -196,7 +279,10 @@ class ControlledArm:
                 self.release()
 
         self.contacts = detect_contacts(self.controller.arm.points, objects)
-        if self._candidate is not None and grasp_candidate(self.contacts, set()) != self._candidate:
+        if (
+            self._candidate is not None
+            and grasp_candidate(self.contacts, self.ignored_food) != self._candidate
+        ):
             # A paused scene edit must also cancel an interrupted grip attempt;
             # elapsed contact from an earlier location cannot be saved for later.
             self._candidate = None
@@ -211,8 +297,10 @@ class ControlledArm:
         """
         if not isfinite(elapsed_seconds) or elapsed_seconds < 0:
             raise ValueError("Elapsed seconds must be finite and non-negative")
-        if (self.active or self.withdrawal_requested) and not (
-            self.withdrawal_requested and self.grip is not None
+        if (
+            (self.active or self.withdrawal_requested)
+            and not self.yielding
+            and not (self.withdrawal_requested and self.grip is not None)
         ):
             self.controller.update(elapsed_seconds, objects)
 
@@ -221,6 +309,7 @@ class ControlledArm:
 
     def release(self) -> None:
         """Drop any held object in place and idle, preventing immediate recapture."""
+        self.goal_object = None
         self.grip = None
         self.carry_goal = None
         self.retracting = False
@@ -262,7 +351,7 @@ class ControlledArm:
 
         objects = environment.objects
         self.sense(objects)
-        if self.withdrawal_requested:
+        if self.withdrawal_requested or self.yielding:
             self.update(elapsed_seconds, objects)
             return None
         if self.grip is not None:
@@ -272,7 +361,9 @@ class ControlledArm:
         hazard = self.controller.hazard
         aversive = hazard.state != "Reaching" or hazard.nearby(self.controller.arm.points, objects)
         candidate = (
-            grasp_candidate(self.contacts, unavailable) if self.active and not aversive else None
+            grasp_candidate(self.contacts, unavailable | self.ignored_food)
+            if self.active and not aversive
+            else None
         )
         if candidate is None:
             self._candidate = None
@@ -366,16 +457,24 @@ class CentralController:
     All arms receive the same elapsed time, but none reads another arm's state.
     """
 
-    def __init__(self, centre: Point, policy: EscalationPolicy = EscalationPolicy()) -> None:
+    def __init__(
+        self,
+        centre: Point,
+        policy: EscalationPolicy = EscalationPolicy(),
+        conflicts: ConflictPolicy = ConflictPolicy(),
+    ) -> None:
         """Arrange eight arms around a fixed body with separate starting targets.
 
         :param centre: Body centre in world pixels.
         :param policy: Validated thresholds used by each independent arm signaller.
+        :param conflicts: Validated arbitration thresholds.
         :raises ValueError: If the centre coordinates are invalid.
         """
         validate_point(centre)
         self.policy = policy
         self.priority = PriorityReceiver()
+        self.conflicts = ConflictResolver(conflicts)
+        self.abandoned_goal_count = 0
         self.centre = tuple(centre)
         self.simulation_seconds = 0.0
         self.capture_count = 0
@@ -394,8 +493,13 @@ class CentralController:
                 base[0] + DEFAULT_TARGET_DISTANCE * cos(heading - 0.3),
                 base[1] + DEFAULT_TARGET_DISTANCE * sin(heading - 0.3),
             )
-            arms.append(ControlledArm(base, heading, target, policy))
+            arms.append(ControlledArm(base, heading, target, policy, conflicts))
         self.arms = tuple(arms)
+
+    @property
+    def goal(self) -> str:
+        """Describe critical broadcast retreat separately from per-arm withdrawal."""
+        return "Withdraw all arms" if self.conflicts.whole_withdrawal else self.priority.goal
 
     def arm(self, index: int) -> ControlledArm:
         """Return one numbered arm, rejecting invalid or negative indices.
@@ -451,11 +555,26 @@ class CentralController:
         :param objects: Snapshot passed to each arm; never inspected centrally.
         """
         for index, arm in enumerate(self.arms):
+            arm.sense(objects)
             signals = arm.signaller.update(arm.controller.arm.points, objects, elapsed_seconds)
-            requested = self.priority.receive(
-                index, signals, self.simulation_seconds, arm.grip is not None
-            )
-            arm.request_withdrawal(requested)
+            self.priority.receive(index, signals, self.simulation_seconds, arm.grip is not None)
+        # Arbitration sees reported threats and local intentions only. The
+        # environment remains inside the arm's sensing/intent boundary.
+        whole = any(
+            report.signal.priority == 100
+            and report.signal.severity >= self.conflicts.policy.critical_severity
+            for report in self.priority.known.values()
+        )
+        decisions = self.conflicts.resolve(
+            tuple(arm.intent(objects) for arm in self.arms),
+            {i for i in range(len(self.arms)) if self.priority.withdrawing(i)},
+            whole,
+            self.simulation_seconds,
+        )
+        for arm, decision in zip(self.arms, decisions):
+            abandoning = arm.active and arm.grip is not None and decision.action == "Withdraw"
+            self.conflicts.release_count += arm.apply_decision(decision)
+            self.abandoned_goal_count += abandoning
 
     def refresh_sensing(self, objects: tuple[WorldObject, ...]) -> None:
         """Refresh observations after scene edits without advancing movement or time.

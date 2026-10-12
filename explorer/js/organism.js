@@ -6,6 +6,7 @@
  * stable order. All geometry is in world pixels; model angles are radians.
  */
 
+import { IDLE, conflictPolicy, conflictDecision, ConflictResolver } from './conflicts.js';
 import { escalationPolicy, HazardSignaller, PriorityReceiver } from './escalation.js';
 import { distance, validatePoint, validateDuration } from './geometry.js';
 import { Arm, armParameters, ReachController } from './model.js';
@@ -35,10 +36,16 @@ export class ControlledArm {
    * @param {number} heading Initial outward heading in clockwise radians.
    * @param {import('./geometry.js').Point} target Initial tip objective in pixels.
    * @param {object} policy Validated reporting and escalation thresholds.
+   * @param {object} conflicts Validated critical-threat and resource-claim settings.
    * @throws {Error} If base, heading or target geometry is invalid.
    */
-  constructor(base, heading, target, policy = escalationPolicy()) {
+  constructor(base, heading, target, policy = escalationPolicy(), conflicts = conflictPolicy()) {
     this.signaller = new HazardSignaller(policy);
+    this.signaller.criticalSeverity = conflicts.critical_severity;
+    this.decision = conflictDecision('Awaiting arbitration', IDLE);
+    this.yielding = false;
+    this.goalObject = null;
+    this.ignoredFood = new Set();
     this.withdrawalRequested = false;
     this.initialHeading = heading;
     this.controller = new ReachController(new Arm(base, DEFAULT_PARAMETERS, heading), target);
@@ -58,11 +65,12 @@ export class ControlledArm {
   get state() {
     if (this.withdrawalRequested) {
       if (this.grip) return 'Holding under alert';
-      return 'Withdrawing';
+      return this.controller.blocked ? 'Withdrawal blocked' : 'Withdrawing';
     }
+    if (this.yielding) return 'Yielding';
+    if (this.active && this.controller.blocked) return 'Blocked';
     if (this.active && this.controller.hazard.state !== 'Reaching')
       return this.controller.hazard.state;
-    if (this.active && this.controller.blocked) return 'Blocked';
     if (this.active && this.controller.avoiding) return 'Avoiding';
     if (this.grip) return !this.active ? 'Holding' : this.retracting ? 'Retracting' : 'Carrying';
     if (this.candidate) return 'Grasping';
@@ -71,9 +79,55 @@ export class ControlledArm {
     return this.controller.status === 'Reached' ? 'Reached' : 'Reaching';
   }
   /**
+   * Summarise task and local resource claims, never a world map.
+   * Explicit food tasks ignore incidental food; coordinate reaches preserve
+   * opportunistic grasping. Input scene records remain unchanged.
+   * @param {object[]} objects Current arm-local sensing snapshot.
+   * @returns {object} Immutable intention for this arbitration pass.
+   */
+  intent(objects) {
+    if (!objects.some((o) => o.identifier === this.goalObject)) this.goalObject = null;
+    this.ignoredFood = new Set(
+      this.contacts
+        .filter(
+          (c) => c.kind === 'Food' && this.goalObject !== null && c.objectId !== this.goalObject,
+        )
+        .map((c) => c.objectId),
+    );
+    const candidate = graspCandidate(this.contacts, this.ignoredFood);
+    return Object.freeze({
+      active: this.active,
+      target: this.carryGoal ?? this.controller.target,
+      heldObject: this.grip?.objectId ?? null,
+      goalObject: this.goalObject,
+      candidate: candidate?.[0] ?? null,
+      avoiding: this.signaller.severity > 0 || this.controller.hazard.state !== 'Reaching',
+      discovery: this.ignoredFood.size ? Math.min(...this.ignoredFood) : null,
+    });
+  }
+  /**
+   * Apply a broad decision, retaining local control of joint movement.
+   * A released payload abandons its carry and stays in place; the arm returns
+   * to idle after retreat so it cannot immediately recapture that payload.
+   * @param {object} decision Selected action from the current arbitration pass.
+   * @returns {boolean} Whether a grip was released by withdrawal.
+   */
+  applyDecision(decision) {
+    const released = decision.action === 'Withdraw' && this.grip !== null;
+    if (released) this.release();
+    this.decision = decision;
+    this.yielding = decision.action === 'Yield';
+    this.requestWithdrawal(decision.action === 'Withdraw');
+    if (this.yielding) {
+      this.candidate = null;
+      this.contactSeconds = 0;
+    }
+    return released;
+  }
+  /**
    * Interpret a broad withdrawal command using this arm's own attachment.
    * Preserve the goal; local steering still controls the retreat. Held food stays
-   * attached and motion pauses until clearance, deferring release arbitration.
+   * attached only when arbitration chooses to maintain it; withdrawal releases it first.
    * @param {boolean} requested Whether central priority suspends this assignment.
    * @returns {void} Updates the local retreat request without changing activity.
    */
@@ -91,11 +145,17 @@ export class ControlledArm {
   /**
    * Assign a destination and restart active work without changing the current pose.
    * @param {import('./geometry.js').Point} target Desired tip or held-food centre in pixels.
+   * @param {number|null} goalObject Optional explicit food identity to prefer over discoveries.
    * @returns {void} Clears previous grasp dwell and stale movement flags.
    * @throws {Error} If the target does not contain finite coordinates.
    */
-  assignReach(target) {
+  assignReach(target, goalObject = null) {
     validatePoint(target);
+    if (goalObject !== null && (!Number.isInteger(goalObject) || goalObject < 1))
+      throw new Error('Food goal must be a positive object identity');
+    this.goalObject = goalObject;
+    this.ignoredFood.clear();
+    this.yielding = false;
     if (this.grip) {
       this.carryGoal = [...target];
       this.retracting = false;
@@ -111,6 +171,7 @@ export class ControlledArm {
    */
   idle() {
     this.active = false;
+    this.yielding = false;
     this.candidate = null;
     this.contactSeconds = 0;
   }
@@ -122,7 +183,9 @@ export class ControlledArm {
   resetPose(parameters = this.controller.arm.parameters) {
     const active = this.active,
       previous = this.controller;
+    const goalObject = this.goalObject;
     this.release();
+    this.goalObject = goalObject;
     this.active = active;
     // Old requests refer to the old geometry. Re-seeding the controller is
     // essential when link count, length or allowed bend changes. Other arms
@@ -154,7 +217,7 @@ export class ControlledArm {
     this.contacts = detectContacts(this.controller.arm.points, objects);
     if (
       this.candidate &&
-      !sameCandidate(graspCandidate(this.contacts, new Set()), this.candidate)
+      !sameCandidate(graspCandidate(this.contacts, this.ignoredFood), this.candidate)
     ) {
       this.candidate = null;
       this.contactSeconds = 0;
@@ -169,7 +232,11 @@ export class ControlledArm {
    */
   update(seconds, objects = []) {
     validateDuration(seconds);
-    if ((this.active || this.withdrawalRequested) && !(this.withdrawalRequested && this.grip))
+    if (
+      (this.active || this.withdrawalRequested) &&
+      !this.yielding &&
+      !(this.withdrawalRequested && this.grip)
+    )
       this.controller.update(seconds, objects);
     this.sense(objects);
   }
@@ -178,6 +245,7 @@ export class ControlledArm {
    * @returns {void} Idles the arm so release does not immediately trigger recapture.
    */
   release() {
+    this.goalObject = null;
     this.grip = this.carryGoal = this.candidate = null;
     this.retracting = false;
     this.contactSeconds = 0;
@@ -214,7 +282,7 @@ export class ControlledArm {
     // payload moved by an earlier arm is visible to the later arms this tick.
     const objects = environment.objects;
     this.sense(objects);
-    if (this.withdrawalRequested) {
+    if (this.withdrawalRequested || this.yielding) {
       this.update(seconds, objects);
       return null;
     }
@@ -225,7 +293,10 @@ export class ControlledArm {
     const hazard = this.controller.hazard;
     const aversive =
       hazard.state !== 'Reaching' || hazard.nearby(this.controller.arm.points, objects);
-    const candidate = this.active && !aversive ? graspCandidate(this.contacts, unavailable) : null;
+    const candidate =
+      this.active && !aversive
+        ? graspCandidate(this.contacts, new Set([...unavailable, ...this.ignoredFood]))
+        : null;
     if (!candidate) {
       this.candidate = null;
       this.contactSeconds = 0;
@@ -322,11 +393,14 @@ export class CentralController {
    * Arrange eight independently controlled arms around a fixed body.
    * @param {import('./geometry.js').Point} centre Body centre in world pixels.
    * @param {object} policy Validated thresholds for each arm signaller.
+   * @param {object} conflicts Validated arbitration thresholds.
    * @throws {Error} If the body coordinates are invalid.
    */
-  constructor(centre, policy = escalationPolicy()) {
+  constructor(centre, policy = escalationPolicy(), conflicts = conflictPolicy()) {
     this.policy = policy;
     this.priority = new PriorityReceiver();
+    this.conflicts = new ConflictResolver(conflicts);
+    this.abandonedGoalCount = 0;
     validatePoint(centre);
     this.centre = [...centre];
     this.simulationSeconds = 0;
@@ -343,8 +417,13 @@ export class CentralController {
         heading,
         [base[0] + 180 * Math.cos(heading - 0.3), base[1] + 180 * Math.sin(heading - 0.3)],
         policy,
+        conflicts,
       );
     });
+  }
+  /** @returns {string} Critical broadcast goal or normal per-arm central intention. */
+  get goal() {
+    return this.conflicts.wholeWithdrawal ? 'Withdraw all arms' : this.priority.goal;
   }
   /**
    * Resolve a model arm index without accepting negative or fractional values.
@@ -401,10 +480,29 @@ export class CentralController {
    */
   signalPriorities(seconds, objects) {
     this.arms.forEach((arm, index) => {
+      arm.sense(objects);
       const signals = arm.signaller.update(arm.controller.arm.points, objects, seconds);
-      arm.requestWithdrawal(
-        this.priority.receive(index, signals, this.simulationSeconds, Boolean(arm.grip)),
-      );
+      this.priority.receive(index, signals, this.simulationSeconds, Boolean(arm.grip));
+    });
+    // Only received threats can broadcast withdrawal. Intention summaries stay
+    // separate from the sensor geometry used privately by each arm.
+    const whole = [...this.priority.known.values()].some(
+      (r) =>
+        r.signal.priority === 100 && r.signal.severity >= this.conflicts.policy.critical_severity,
+    );
+    const withdrawing = new Set(
+      this.arms.flatMap((a, i) => (this.priority.withdrawing(i) ? [i] : [])),
+    );
+    const decisions = this.conflicts.resolve(
+      this.arms.map((a) => a.intent(objects)),
+      withdrawing,
+      whole,
+      this.simulationSeconds,
+    );
+    this.arms.forEach((arm, i) => {
+      const abandoning = arm.active && arm.grip !== null && decisions[i].action === 'Withdraw';
+      this.conflicts.releaseCount += Number(arm.applyDecision(decisions[i]));
+      this.abandonedGoalCount += Number(abandoning);
     });
   }
   /**

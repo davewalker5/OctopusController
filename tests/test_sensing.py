@@ -98,17 +98,18 @@ def test_idle_arm_senses_and_clears_contacts_without_motion() -> None:
     assert arm.contacts == ()
 
 
-def test_food_sensing_does_not_reassign_or_steer_arms() -> None:
-    """Food remains touchable and does not invoke the obstacle steering rules."""
+def test_shared_food_contact_yields_without_reassigning_targets() -> None:
+    """A shared resource permits one claimant; losers retain their destinations."""
     sensed = CentralController((0, 0))
     reference = CentralController((0, 0))
     obj = WorldObject(1, (0, 0), ObjectKind.FOOD, 500)
     for _ in range(60):
         sensed.update(1 / 120, (obj,))
         reference.update(1 / 120)
-    for arm, other in zip(sensed.arms, reference.arms):
-        assert arm.state is ArmState.CONTACT
-        assert arm.controller.arm.points == other.controller.arm.points
+    for index, (arm, other) in enumerate(zip(sensed.arms, reference.arms)):
+        assert arm.state is (ArmState.CONTACT if index == 0 else ArmState.YIELDING)
+        if index == 0:
+            assert arm.controller.arm.points == other.controller.arm.points
         assert arm.controller.target == other.controller.target
         for contact in arm.contacts:
             assert hypot(contact.position[0], contact.position[1]) < 500

@@ -45,12 +45,16 @@ def test_drag_target_and_release() -> None:
     """Dragging clamps to the world and release stops further target movement."""
     application = Application()
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(500, 200)))
-    assert application.controller.target == (500, 200)
+    assert application.controller.target == pytest.approx(application.camera.unproject((500, 200)))
     application.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(-100, 900)))
-    assert application.controller.target == (WORLD.left, WORLD.bottom - 1)
+    assert application.controller.target == pytest.approx(
+        application.camera.unproject((WORLD.left, WORLD.bottom - 1))
+    )
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1))
     application.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(100, 100)))
-    assert application.controller.target == (WORLD.left, WORLD.bottom - 1)
+    assert application.controller.target == pytest.approx(
+        application.camera.unproject((WORLD.left, WORLD.bottom - 1))
+    )
 
 
 def test_parameter_changes_and_defaults(make_reaching_application) -> None:
@@ -137,7 +141,9 @@ def test_selection_assignments_and_drag_do_not_leak_between_arms() -> None:
     original = application.central.arm(0).controller.target
     press(application, pygame.K_3)
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(500, 200)))
-    assert application.central.arm(2).controller.target == (500, 200)
+    assert application.central.arm(2).controller.target == pytest.approx(
+        application.camera.unproject((500, 200))
+    )
     assert application.central.arm(0).controller.target == original
     press(application, pygame.K_TAB)
     target = application.controller.target
@@ -147,7 +153,7 @@ def test_selection_assignments_and_drag_do_not_leak_between_arms() -> None:
     assert not application.central.arm(3).active
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(450, 300)))
     assert application.central.arm(3).active
-    assert application.controller.target == (450, 300)
+    assert application.controller.target == pytest.approx(application.camera.unproject((450, 300)))
 
 
 def test_paused_step_updates_all_and_selected_parameters_only(make_reaching_application) -> None:
@@ -180,7 +186,7 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     application = Application()
     before = application.controller.arm.points
     target = application.controller.target
-    position = tuple(round(value) for value in before[10])
+    position = tuple(round(value) for value in application.camera.project(before[10]))
     press(application, pygame.K_f)
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=position))
     assert application.controller.target == target
@@ -189,7 +195,9 @@ def test_place_move_and_delete_objects_while_paused() -> None:
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=position))
     application.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(40, 110)))
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=3))
-    assert application.environment.objects[-1].centre == (40, 110)
+    assert application.environment.objects[-1].centre == pytest.approx(
+        application.camera.unproject((40, 110))
+    )
     assert not application.central.arm(0).contacts
     assert application.controller.arm.points == before
     press(application, pygame.K_DELETE)
@@ -207,7 +215,7 @@ def test_placement_tool_can_be_cancelled() -> None:
     press(application, pygame.K_o)
     assert application.placement is None
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(600, 500)))
-    assert application.controller.target == (600, 500)
+    assert application.controller.target == pytest.approx(application.camera.unproject((600, 500)))
     assert len(application.environment.objects) == 0
 
 
@@ -391,7 +399,7 @@ def test_main_renders_picker_and_loads_without_blocking(monkeypatch, tmp_path):
     app.main([])
     assert len(frames) == 3
     assert frames[0][1].simulation_seconds == 0
-    assert frames[-1][-2] == "Live reef"
+    assert frames[-1][11] == "Live reef"
     assert frames[-1][2] is True
     assert captions[-1].endswith("Live reef")
 
@@ -483,6 +491,7 @@ def test_clear_button_matches_empty_startup_and_forgets_loaded_setup():
     startup = Application()
     assert application.scenario is None
     assert application.scenario_name == startup.scenario_name == "Empty scenario"
+    assert application.camera == startup.camera
     assert application.central.centre == startup.central.centre
     assert application.environment.objects == startup.environment.objects == ()
     assert application.paused and startup.paused
@@ -574,5 +583,147 @@ def test_hazard_placement_preserves_assignment():
     application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(600, 300)))
     hazard = application.environment.objects[-1]
     assert hazard.kind is ObjectKind.HAZARD
-    assert hazard.centre == (600, 300)
+    assert hazard.centre == pytest.approx(application.camera.unproject((600, 300)))
     assert application.controller.target == target
+
+
+def test_history_pauses_filters_scrolls_and_consumes_scene_input():
+    """Inspection cannot assign targets; closing restores the previous playback state."""
+    from octopus_controller.view import (
+        HISTORY_ARM,
+        HISTORY_BUTTON,
+        HISTORY_CATEGORY,
+        HISTORY_LATEST,
+        MESSAGE_PANEL,
+    )
+
+    application = Application()
+    for index in range(40):
+        application.activity.record(index, "Food", (0,), f"Capture {index}")
+    application.paused = False
+    target = application.controller.target
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=HISTORY_BUTTON.center)
+    )
+    assert application.history_open and application.paused
+    application.advance(1)
+    assert application.central.simulation_seconds == 0
+    application.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, y=1))
+    assert application.message_scroll is not None
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=WORLD.center))
+    assert application.controller.target == target
+    for button in (HISTORY_ARM, HISTORY_CATEGORY):
+        application.handle_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=button.center)
+        )
+    assert application.history_arm == 0
+    assert application.history_category == "Food"
+    application.handle_event(
+        pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=HISTORY_LATEST.center)
+    )
+    assert application.message_scroll is None
+    assert press(application, pygame.K_ESCAPE)
+    assert not application.history_open and not application.paused
+    assert WORLD.bottom < MESSAGE_PANEL.top
+    application.restart()
+    assert not application.activity.events
+
+
+def test_loaded_scene_centres_body_and_fits_full_arm_reach() -> None:
+    """A displaced, large scenario fits without rewriting its model coordinates."""
+    from octopus_controller.scenario import parse_scenario
+
+    scenario = parse_scenario(
+        {
+            "version": 1,
+            "body": [1200, -300],
+            "defaults": {"segment_count": 40, "segment_length": 30},
+            "food": [{"position": [1200, -500]}],
+        }
+    )
+    application = Application(scenario)
+    camera = application.camera
+    assert camera.project(application.central.centre) == pytest.approx(WORLD.center)
+    assert application.central.centre == (1200, -300)
+    assert application.environment.objects[0].centre == (1200, -500)
+    for arm in application.central.arms:
+        geometry = arm.controller.arm
+        length = geometry.parameters.segment_count * geometry.parameters.segment_length
+        # Straightening in any cardinal direction cannot escape the fitted view.
+        for dx, dy in [(length, 0), (-length, 0), (0, length), (0, -length)]:
+            assert WORLD.collidepoint(
+                camera.project((geometry.base[0] + dx, geometry.base[1] + dy))
+            )
+        assert all(WORLD.collidepoint(camera.project(p)) for p in geometry.points)
+    assert camera.unproject(camera.project((1234, -567))) == pytest.approx((1234, -567))
+    assert application.central.simulation_seconds == 0
+    application.restart()
+    assert application.camera == camera
+
+
+def test_fitted_view_converts_clicks_and_drags_back_to_world_coordinates() -> None:
+    """Targets, placement and object editing all use the inverse display transform."""
+    from octopus_controller.scenario import parse_scenario
+    from octopus_controller.sensing import ObjectKind
+
+    application = Application(parse_scenario({"version": 1, "body": [1500, -200]}))
+    position = (WORLD.centerx + 50, WORLD.centery - 50)
+    expected = application.camera.unproject(position)
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=position))
+    assert application.controller.target == pytest.approx(expected)
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1))
+    application.placement = ObjectKind.FOOD
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=position))
+    assert application.environment.objects[0].centre == pytest.approx(expected)
+    application.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=position))
+    assert application.dragging_object
+    application.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(-100, 1000)))
+    assert application.environment.objects[0].centre == pytest.approx(
+        application.camera.unproject((WORLD.left, WORLD.bottom - 1))
+    )
+    assert application.central.simulation_seconds == 0
+
+
+@pytest.mark.parametrize("speed", (2, 4, 8))
+def test_playback_speed_preserves_model_ticks(speed):
+    """Accelerated reef playback must reproduce the complete normal-speed model."""
+    from octopus_controller.scenario import load_scenario
+
+    scenario = load_scenario("scenarios/reef-forage-extended.json")
+    normal, fast = Application(scenario), Application(scenario)
+    normal.paused = fast.paused = False
+    while fast.playback_speed != speed:
+        press(fast, pygame.K_v)
+    for _ in range(60 * speed):
+        normal.advance(1 / 60)
+    for _ in range(60):
+        fast.advance(1 / 60)
+    assert fast.central.simulation_seconds == normal.central.simulation_seconds
+    assert fast.central.capture_reports == normal.central.capture_reports
+    assert fast.central.conflicts.events == normal.central.conflicts.events
+    assert fast.central.priority.reports == normal.central.priority.reports
+    for accelerated, baseline in zip(fast.central.arms, normal.central.arms):
+        assert accelerated.controller.arm.angles == baseline.controller.arm.angles
+        assert accelerated.state == baseline.state
+        assert accelerated.grip == baseline.grip
+        assert (
+            accelerated.controller.hazard.exposure_seconds
+            == baseline.controller.hazard.exposure_seconds
+        )
+    assert fast.environment.objects == normal.environment.objects
+    fast.paused = True
+    before = fast.central.simulation_seconds
+    press(fast, pygame.K_n)
+    assert fast.central.simulation_seconds == pytest.approx(before + SIMULATION_STEP)
+
+
+def test_empty_scene_centres_body_on_startup_and_restart():
+    """Empty scenes use the same fitted camera without moving model coordinates."""
+    application = Application()
+    for _ in range(2):
+        assert application.camera.project(application.central.centre) == pytest.approx(WORLD.center)
+        for arm in application.central.arms:
+            assert all(
+                WORLD.collidepoint(application.camera.project(p)) for p in arm.controller.arm.points
+            )
+        application.restart()

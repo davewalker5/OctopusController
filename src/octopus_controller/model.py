@@ -140,10 +140,10 @@ class ReachController:
     @property
     def status(self) -> str:
         """Describe progress without claiming all in-range targets are reachable."""
-        if self.hazard.state != "Reaching":
-            return self.hazard.state
         if self.blocked:
             return "Blocked"
+        if self.hazard.state != "Reaching":
+            return self.hazard.state
         if self.avoiding:
             return "Avoiding"
         if self.distance <= REACH_TOLERANCE:
@@ -273,12 +273,27 @@ class ReachController:
             )
 
         # This geometric guard checks the full swept movement, but never chooses
-        # a route. If any segment would cross an obstacle, hold the visible pose.
+        # a route. Reject the combined proposal if any segment would cross a solid.
         # Keep the new requests: neighbours can continue changing their requests
         # on later ticks and may find a turn that the constraints will allow.
         if safe_motion(
             self.arm.base, previous_angles, proposed_angles, parameters.segment_length, obstacles
         ):
             self.arm.angles = proposed_angles
+        elif self.hazard.state != "Reaching" or self.withdrawal_goal is not None:
+            # A proximal collision must not freeze safe distal escape motions.
+            # Try the already-requested turns separately, tip first, checking the
+            # entire sweep from the original pose for every trial. Local requests
+            # stay unchanged; lengths, bend limits and turn budgets are retained.
+            accepted = previous_angles.copy()
+            for index in reversed(range(len(accepted))):
+                trial = accepted.copy()
+                trial[index] = proposed_angles[index]
+                if safe_motion(
+                    self.arm.base, previous_angles, trial, parameters.segment_length, obstacles
+                ):
+                    accepted = trial
+            self.arm.angles = accepted
+            self.blocked = accepted == previous_angles
         else:
             self.blocked = True

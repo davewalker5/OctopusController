@@ -32,7 +32,22 @@ def snapshot(central, environment):
             s.reason,
         ]
 
+    def decision(d):
+        """Keep arbitration fields ordered like the JavaScript reference."""
+        return [d.action, d.priority, d.conflict, d.reason, d.winner, d.scope]
+
     return {
+        "conflicts": [
+            central.goal,
+            central.conflicts.conflict_count,
+            central.conflicts.release_count,
+            central.abandoned_goal_count,
+            central.conflicts.whole_withdrawal,
+            [
+                [e.simulation_seconds, e.arm_index, decision(e.decision)]
+                for e in central.conflicts.events
+            ],
+        ],
         "priority": [
             priority.goal,
             priority.report_count,
@@ -57,6 +72,8 @@ def snapshot(central, environment):
                 "points": a.controller.arm.points,
                 "target": a.controller.target,
                 "active": a.active,
+                "decision": decision(a.decision),
+                "focus": a.goal_object,
                 "notification": a.signaller.notification,
                 "withdrawal_goal": a.controller.withdrawal_goal,
                 "state": a.state.value,
@@ -97,7 +114,7 @@ def trace(name):
         environment.add(central.arm(0).controller.arm.points[1], ObjectKind.FOOD, 4)
         central.refresh_sensing(environment.objects)
     result = [snapshot(central, environment)]
-    for tick in range(1, 601):
+    for tick in range(1, 1201 if name == "reef-forage-extended" else 601):
         if name == "grasp":
             if tick == 31:
                 central.arm(0).assign_reach((425, 435))
@@ -113,7 +130,7 @@ def trace(name):
             elif tick == 300:
                 environment.remove(1)
         central.step(1 / 120, environment)
-        if tick in (1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600):
+        if tick in (1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600, 1200):
             result.append(snapshot(central, environment))
     return result
 
@@ -174,6 +191,10 @@ else:
                 "traces": {
                     name: trace(name)
                     for name in (
+                        "reef-forage-extended",
+                        "competing-arms",
+                        "food-vs-danger",
+                        "discovery-vs-task",
                         "two-targets",
                         "behaviour-showcase",
                         "local-hazard",

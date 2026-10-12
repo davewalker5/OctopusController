@@ -129,8 +129,8 @@ export class ReachController {
    * @returns {string} Blocked, Avoiding, Reached, Beyond reach or Reaching.
    */
   get status() {
-    if (this.hazard.state !== 'Reaching') return this.hazard.state;
     if (this.blocked) return 'Blocked';
+    if (this.hazard.state !== 'Reaching') return this.hazard.state;
     if (this.avoiding) return 'Avoiding';
     // Two pixels is the common tip-arrival tolerance, not a biological measure.
     if (this.distance <= 2) return 'Reached';
@@ -237,6 +237,18 @@ export class ReachController {
     // new messages so neighbours can continue adjusting on later ticks.
     if (safeMotion(this.arm.base, before, proposed, p.segmentLength, obstacles))
       this.arm.angles = proposed;
-    else this.blocked = true;
+    else if (this.hazard.state !== 'Reaching' || this.withdrawalGoal !== null) {
+      // A blocked proximal turn must not freeze safe distal escape. Relax the
+      // existing requests tip first, checking the full sweep from the original pose each time.
+      // Each joint still uses its original bounded turn; no route is planned.
+      let accepted = [...before];
+      for (let i = accepted.length - 1; i >= 0; i--) {
+        const trial = [...accepted];
+        trial[i] = proposed[i];
+        if (safeMotion(this.arm.base, before, trial, p.segmentLength, obstacles)) accepted = trial;
+      }
+      this.arm.angles = accepted;
+      this.blocked = accepted.every((angle, i) => angle === before[i]);
+    } else this.blocked = true;
   }
 }

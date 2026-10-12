@@ -173,3 +173,60 @@ def test_unreachable_solid_target_does_not_suppress_local_recoil():
     assert controller.hazard.state == "Recoiling"
     assert controller.arm.angles != before
     assert controller.target == (150, -100)
+
+
+def test_mild_penetration_requests_escape_without_restarting_recoil():
+    """An already-penetrating segment must not settle on a boundary waypoint."""
+    response = HazardResponse()
+    hazard = WorldObject(1, (10, 1), ObjectKind.HAZARD, 4, 0.25, 12)
+    points = [(0, 0), (20, 0)]
+    response.sense(points, (hazard,), 0.01)
+    assert response.state == "Avoiding hazard"
+    goal = response.steer(0, *points, (40, 0), 20)
+    assert goal[1] < points[-1][1]  # Outward from the hazard above the link.
+    assert response.state == "Avoiding hazard"
+    assert response.encounters == 1
+
+
+def test_reef_arm_three_escapes_without_crossing_solid_obstacles():
+    """Regression: a blocked proximal turn previously froze the tip inside H14."""
+    from octopus_controller.avoidance import safe_motion
+    from octopus_controller.segment_control import wrap_angle
+
+    central, environment = load_scenario("scenarios/reef-forage-extended.json").build()
+    controlled = central.arm(2)
+    arm = controlled.controller.arm
+    target = controlled.controller.target
+    hazards = [o for o in environment.objects if o.kind is ObjectKind.HAZARD]
+    obstacles = tuple(o for o in environment.objects if o.kind is ObjectKind.OBSTACLE)
+    for _ in range(1200):
+        before = arm.angles.copy()
+        central.step(1 / 120, environment)
+        assert safe_motion(arm.base, before, arm.angles, arm.parameters.segment_length, obstacles)
+        changes = [new - old for old, new in zip(before, arm.angles)]
+        changes[0] = wrap_angle(changes[0])
+        assert max(map(abs, changes)) <= arm.parameters.turning_speed / 120 + 1e-12
+        assert max(map(abs, arm.angles[1:])) <= arm.parameters.maximum_bend + 1e-12
+    assert gap(arm, hazards[0]) > 0
+    assert dist(arm.points[-1], hazards[0].centre) > hazards[0].radius + 3
+    assert controlled.controller.hazard.exposure_seconds < 2
+    assert controlled.controller.target == target
+
+
+def test_unavoidable_blockage_is_visible_during_withdrawal(monkeypatch):
+    """A rejected escape must not be displayed as successful withdrawal motion."""
+    from octopus_controller import model
+    from octopus_controller.organism import CentralController
+
+    central = CentralController((400, 460))
+    arm = central.arm(2)
+    arm.request_withdrawal(True)
+    before = arm.controller.arm.angles.copy()
+    monkeypatch.setattr(model, "safe_motion", lambda *args: False)
+    arm.update(1 / 120)
+    assert arm.controller.arm.angles == before
+    assert arm.state.value == "Withdrawal blocked"
+    assert arm.controller.status == "Blocked"
+    arm.request_withdrawal(False)
+    arm.controller.hazard.state = "Recoiling"
+    assert arm.state.value == "Blocked"

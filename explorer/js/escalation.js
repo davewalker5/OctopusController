@@ -78,6 +78,9 @@ export class HazardSignaller {
    */
   constructor(policy) {
     this.policy = policy;
+    // The scene arbiter supplies its critical threshold. A crossing must be
+    // reported even when priority was already 100, or central knowledge stays stale.
+    this.criticalSeverity = 1;
     // Episodes are local bookkeeping, never central knowledge. Quiet resets on
     // detection; exposure resets outside the region; reported latches priority
     // until a clear interval completes, even if severity drops or position changes.
@@ -162,7 +165,13 @@ export class HazardSignaller {
       // An upgrade is a fresh observation, and low severity never promotes by time.
       // Comparing with the last report also prevents an in-episode downgrade;
       // only a completed quiet interval releases the notification latch.
-      if (priority > (episode.reported?.priority ?? 0)) {
+      const criticalUpgrade =
+        priority === 100 &&
+        episode.reported !== null &&
+        obj.severity >= this.criticalSeverity &&
+        episode.reported.severity < this.criticalSeverity;
+      if (priority > (episode.reported?.priority ?? 0) || criticalUpgrade) {
+        if (criticalUpgrade) reason = 'Critical severity';
         // Copy and freeze coordinates as well as the record: historical reports
         // must not follow a moved hazard through a shared mutable position array.
         episode.reported = Object.freeze({
@@ -240,7 +249,7 @@ export class PriorityReceiver {
    * @param {number} armIndex Zero-based source arm identity.
    * @param {HazardSignal[]} signals New local observations, upgrades and clear messages.
    * @param {number} seconds Current central simulation time for logging.
-   * @param {boolean} holding Whether grip arbitration must be deferred.
+   * @param {boolean} holding Whether the separate arbiter must resolve a held grip.
    * @returns {boolean} Whether to suspend the arm's ordinary assignment.
    */
   receive(armIndex, signals, seconds, holding) {
@@ -283,10 +292,10 @@ export class PriorityReceiver {
     if (after !== before) {
       if (after) this.interventionCount++;
       // Holding changes the explanatory command, not the priority. This layer
-      // never releases a grip; clearance or later arbitration resolves that case.
+      // never releases a grip; the arbiter acts after all arms have reported.
       const action = after
         ? holding
-          ? 'hold grip; withdrawal pending'
+          ? 'resolve grip versus withdrawal'
           : 'withdraw locally'
         : 'resume assignment';
       this.messages.push(
