@@ -16,6 +16,8 @@
  * @property {ArmSetup[]} arms Eight resolved starting assignments, in arm-index order.
  */
 
+import { conflictPolicy } from './conflicts.js';
+import { escalationPolicy } from './escalation.js';
 import { armParameters } from './model.js';
 import { CentralController, DEFAULT_PARAMETERS } from './organism.js';
 import { Environment, ObjectKind, worldObject } from './sensing.js';
@@ -254,7 +256,18 @@ function parameters(value, base, location) {
 export function parseScenario(text) {
   const data = mapping(
     decodeJSON(text),
-    ['version', 'name', 'body', 'defaults', 'food', 'obstacles', 'arms'],
+    [
+      'version',
+      'name',
+      'body',
+      'defaults',
+      'food',
+      'obstacles',
+      'hazards',
+      'arms',
+      'escalation',
+      'conflicts',
+    ],
     'Scenario',
   );
   // Presence checks below distinguish an omitted default from explicit null.
@@ -275,17 +288,23 @@ export function parseScenario(text) {
   // named references work regardless of key order in the input document.
   // Named food labels differ from the numeric IDs used by sensors and grips.
   const objects = [],
-    foodPositions = new Map();
+    foodPositions = new Map(),
+    foodIds = new Map();
   for (const [collection, kind] of [
     ['food', ObjectKind.FOOD],
     ['obstacles', ObjectKind.OBSTACLE],
+    ['hazards', ObjectKind.HAZARD],
   ]) {
     const entries = array(Object.hasOwn(data, collection) ? data[collection] : [], collection);
     entries.forEach((raw, index) => {
       const location = `${collection}[${index}]`;
       const obj = mapping(
         raw,
-        kind === ObjectKind.FOOD ? ['position', 'radius', 'id'] : ['position', 'radius'],
+        kind === ObjectKind.FOOD
+          ? ['position', 'radius', 'id']
+          : kind === ObjectKind.HAZARD
+            ? ['position', 'radius', 'severity', 'detection_range']
+            : ['position', 'radius'],
         location,
       );
       const position = point(obj.position, `${location}.position`);
@@ -299,19 +318,31 @@ export function parseScenario(text) {
         // Preserve exact case and whitespace in nonblank IDs. Trimming here
         // would silently change which later references identify the same food.
         foodPositions.set(obj.id, position);
+        foodIds.set(obj.id, objects.length + 1);
       }
       // buildScenario adds in this same order, reproducing stable numeric IDs.
-      objects.push(worldObject(objects.length + 1, position, kind, radius));
+      objects.push(
+        worldObject(
+          objects.length + 1,
+          position,
+          kind,
+          radius,
+          Object.hasOwn(obj, 'severity') ? number(obj.severity, `${location}.severity`) : 0.5,
+          Object.hasOwn(obj, 'detection_range')
+            ? number(obj.detection_range, `${location}.detection_range`)
+            : 24,
+        ),
+      );
     });
   }
   // Omitted arms still exist, inherit defaults and start idle. Explicit entries
   // replace one slot, independently of their order in the file.
   const arms = Array.from({ length: 8 }, () =>
-      Object.freeze({ parameters: defaults, target: null }),
+      Object.freeze({ parameters: defaults, target: null, foodId: null }),
     ),
     seen = new Set();
   for (const raw of array(Object.hasOwn(data, 'arms') ? data.arms : [], 'arms')) {
-    const arm = mapping(raw, ['number', 'parameters', 'target'], 'Arm');
+    const arm = mapping(raw, ['number', 'parameters', 'target', 'focus_food'], 'Arm');
     const n = integer(arm.number, 1, 8, 'Arm.number');
     if (seen.has(n)) throw new Error(`Duplicate arm number ${n}`);
     seen.add(n);
@@ -320,7 +351,8 @@ export function parseScenario(text) {
       defaults,
       `Arm ${n}.parameters`,
     );
-    let target = null;
+    let target = null,
+      foodId = null;
     // An absent target means idle; null, an empty mapping, or both target
     // forms are errors rather than alternative spellings of that default.
     if (Object.hasOwn(arm, 'target')) {
@@ -330,17 +362,48 @@ export function parseScenario(text) {
       if (Object.hasOwn(assignment, 'food')) {
         if (typeof assignment.food !== 'string' || !foodPositions.has(assignment.food))
           throw new Error(`Arm ${n} references unknown food`);
-        // Resolve only the initial centre. This does not reserve ownership or
-        // track food as it moves; normal contacts still determine capture.
+        // Keep a fixed destination and a resource identity: incidental food
+        // must not replace this task, while contacts still determine capture.
         target = foodPositions.get(assignment.food);
+        foodId = foodIds.get(assignment.food);
       } else target = point(assignment.position, `Arm ${n}.target.position`);
     }
+    if (Object.hasOwn(arm, 'focus_food')) {
+      if (typeof arm.focus_food !== 'string' || !foodIds.has(arm.focus_food) || target === null)
+        throw new Error(`Arm ${n}.focus_food requires a target and known food`);
+      const focus = foodIds.get(arm.focus_food);
+      if (foodId !== null && foodId !== focus)
+        throw new Error(`Arm ${n}.focus_food contradicts target.food`);
+      foodId = focus;
+    }
     // File/UI arm numbers are one-based; internal array indices are zero-based.
-    arms[n - 1] = Object.freeze({ parameters: p, target });
+    arms[n - 1] = Object.freeze({ parameters: p, target, foodId });
   }
   // Publish only fully validated, frozen starting conditions. Runtime poses,
   // grips and capture history are deliberately not part of the scenario format.
+  const rawPolicy = mapping(
+    Object.hasOwn(data, 'escalation') ? data.escalation : {},
+    Object.keys(escalationPolicy()),
+    'escalation',
+  );
+  const escalation = escalationPolicy(
+    Object.fromEntries(
+      Object.entries(rawPolicy).map(([key, value]) => [key, number(value, `escalation.${key}`)]),
+    ),
+  );
+  const rawConflicts = mapping(
+    Object.hasOwn(data, 'conflicts') ? data.conflicts : {},
+    Object.keys(conflictPolicy()),
+    'conflicts',
+  );
+  const conflicts = conflictPolicy(
+    Object.fromEntries(
+      Object.entries(rawConflicts).map(([key, value]) => [key, number(value, `conflicts.${key}`)]),
+    ),
+  );
   return Object.freeze({
+    conflicts,
+    escalation,
     name,
     body,
     objects: Object.freeze(objects),
@@ -354,15 +417,16 @@ export function parseScenario(text) {
  * @throws {Error} If model construction rejects the supplied geometry.
  */
 export function buildScenario(scenario) {
-  const central = new CentralController(scenario.body),
+  const central = new CentralController(scenario.body, scenario.escalation, scenario.conflicts),
     environment = new Environment();
-  for (const obj of scenario.objects) environment.add(obj.centre, obj.kind, obj.radius);
+  for (const obj of scenario.objects)
+    environment.add(obj.centre, obj.kind, obj.radius, obj.severity, obj.detectionRange);
   // Rebuild instead of reusing previous runtime instances: moved objects,
   // in-flight requests, grips, timers and capture reports must not survive restart.
   central.arms.forEach((arm, i) => {
     arm.resetPose(scenario.arms[i].parameters);
     if (scenario.arms[i].target === null) arm.idle();
-    else arm.assignReach(scenario.arms[i].target);
+    else arm.assignReach(scenario.arms[i].target, scenario.arms[i].foodId);
   });
   // A loaded setup is displayed paused, so contacts must already match the
   // visible initial pose without requiring a movement tick.

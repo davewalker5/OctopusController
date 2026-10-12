@@ -15,14 +15,56 @@ from octopus_controller.sensing import Environment, ObjectKind
 
 def snapshot(central, environment):
     """Keep numerical state, local messages and discrete events observable."""
+    priority = central.priority
+
+    def report(r):
+        """Serialise immutable signals in the same field order as browser tests."""
+        s = r.signal
+        return [
+            r.arm_index,
+            r.simulation_seconds,
+            s.object_id,
+            s.position,
+            s.severity,
+            s.priority,
+            s.affected_segments,
+            s.exposure_seconds,
+            s.reason,
+        ]
+
+    def decision(d):
+        """Keep arbitration fields ordered like the JavaScript reference."""
+        return [d.action, d.priority, d.conflict, d.reason, d.winner, d.scope]
+
     return {
+        "conflicts": [
+            central.goal,
+            central.conflicts.conflict_count,
+            central.conflicts.release_count,
+            central.abandoned_goal_count,
+            central.conflicts.whole_withdrawal,
+            [
+                [e.simulation_seconds, e.arm_index, decision(e.decision)]
+                for e in central.conflicts.events
+            ],
+        ],
+        "priority": [
+            priority.goal,
+            priority.report_count,
+            priority.escalation_count,
+            priority.intervention_count,
+            [report(r) for r in priority.known.values()],
+            [report(r) for r in priority.reports],
+            [[m.simulation_seconds, m.text] for m in priority.messages],
+        ],
         "seconds": central.simulation_seconds,
         "count": central.capture_count,
         "reports": [
             [r.arm_index, r.object_id, r.simulation_seconds] for r in central.capture_reports
         ],
         "objects": [
-            [o.identifier, list(o.centre), o.kind.value, o.radius] for o in environment.objects
+            [o.identifier, list(o.centre), o.kind.value, o.radius, o.severity, o.detection_range]
+            for o in environment.objects
         ],
         "arms": [
             {
@@ -30,8 +72,18 @@ def snapshot(central, environment):
                 "points": a.controller.arm.points,
                 "target": a.controller.target,
                 "active": a.active,
+                "decision": decision(a.decision),
+                "focus": a.goal_object,
+                "notification": a.signaller.notification,
+                "withdrawal_goal": a.controller.withdrawal_goal,
                 "state": a.state.value,
                 "status": a.controller.status,
+                "hazard": [
+                    a.controller.hazard.state,
+                    a.controller.hazard.severity,
+                    a.controller.hazard.encounters,
+                    a.controller.hazard.exposure_seconds,
+                ],
                 "grip": None
                 if a.grip is None
                 else [a.grip.object_id, a.grip.segment_index, a.grip.offset],
@@ -62,7 +114,7 @@ def trace(name):
         environment.add(central.arm(0).controller.arm.points[1], ObjectKind.FOOD, 4)
         central.refresh_sensing(environment.objects)
     result = [snapshot(central, environment)]
-    for tick in range(1, 601):
+    for tick in range(1, 1201 if name == "reef-forage-extended" else 601):
         if name == "grasp":
             if tick == 31:
                 central.arm(0).assign_reach((425, 435))
@@ -78,7 +130,7 @@ def trace(name):
             elif tick == 300:
                 environment.remove(1)
         central.step(1 / 120, environment)
-        if tick in (1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600):
+        if tick in (1, 29, 30, 31, 60, 81, 101, 161, 221, 301, 600, 1200):
             result.append(snapshot(central, environment))
     return result
 
@@ -137,7 +189,19 @@ else:
         json.dumps(
             {
                 "traces": {
-                    name: trace(name) for name in ("two-targets", "behaviour-showcase", "grasp")
+                    name: trace(name)
+                    for name in (
+                        "reef-forage-extended",
+                        "competing-arms",
+                        "food-vs-danger",
+                        "discovery-vs-task",
+                        "two-targets",
+                        "behaviour-showcase",
+                        "local-hazard",
+                        "hazard-escalation",
+                        "local-obstacle",
+                        "grasp",
+                    )
                 },
                 "geometry": geometry_cases(),
             }

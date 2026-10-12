@@ -15,6 +15,7 @@
 import { distance, posePoints, validatePoint, validateDuration } from './geometry.js';
 import { wrapAngle, requestStart, turnSegment } from './segment-control.js';
 import { ARM_CLEARANCE, safeMotion, steerAroundObstacles } from './avoidance.js';
+import { HazardResponse } from './hazards.js';
 import { ObjectKind, detectContacts } from './sensing.js';
 /**
  * Resolve standalone defaults and validate geometry and motion limits.
@@ -93,6 +94,8 @@ export class ReachController {
    * @throws {Error} If target coordinates are invalid.
    */
   constructor(arm, target) {
+    this.hazard = new HazardResponse();
+    this.withdrawalGoal = null;
     this.arm = arm;
     const points = arm.points;
     let heading = 0;
@@ -127,6 +130,7 @@ export class ReachController {
    */
   get status() {
     if (this.blocked) return 'Blocked';
+    if (this.hazard.state !== 'Reaching') return this.hazard.state;
     if (this.avoiding) return 'Avoiding';
     // Two pixels is the common tip-arrival tolerance, not a biological measure.
     if (this.distance <= 2) return 'Reached';
@@ -149,21 +153,32 @@ export class ReachController {
   update(seconds, objects = []) {
     validateDuration(seconds);
     if (seconds === 0) return;
+    this.hazard.sense(this.arm.points, objects, seconds);
+    // The arm supplies a local retreat point without replacing its assignment.
+    const movementGoal = this.withdrawalGoal ?? this.target;
     const obstacles = objects.filter((obj) => obj.kind === ObjectKind.OBSTACLE);
     this.blocked = this.avoiding = false;
     // The tip cannot reach inside a solid circle plus arm clearance. Preserve
     // the assignment so a later target or scene edit can allow it to resume.
-    if (obstacles.some((obj) => distance(this.target, obj.centre) < obj.radius + ARM_CLEARANCE)) {
+    if (
+      this.hazard.state === 'Reaching' &&
+      obstacles.some((obj) => distance(movementGoal, obj.centre) < obj.radius + ARM_CLEARANCE)
+    ) {
       this.blocked = true;
       return;
     }
     // Arrival alone must not suppress an escape attempt if a newly moved
     // obstacle overlaps the current arm. Food never constrains movement.
-    if (this.distance <= 2 && !detectContacts(this.arm.points, obstacles).length) return;
+    if (
+      this.hazard.state === 'Reaching' &&
+      distance(this.arm.points.at(-1), movementGoal) <= 2 &&
+      !detectContacts(this.arm.points, obstacles).length
+    )
+      return;
     const p = this.arm.parameters,
       positions = this.arm.points;
     // Read all old requests first: a target travels one neighbour per tick.
-    const goals = [...this.requests.slice(1).map((request) => request.start), this.target].map(
+    const goals = [...this.requests.slice(1).map((request) => request.start), movementGoal].map(
       (goal, i) => {
         const [steered, changed] = steerAroundObstacles(
           positions[i],
@@ -172,7 +187,7 @@ export class ReachController {
           obstacles,
         );
         this.avoiding ||= changed;
-        return steered;
+        return this.hazard.steer(i, positions[i], positions[i + 1], steered, p.segmentLength);
       },
     );
     // The right-hand map completes before this.requests is replaced, so each
@@ -222,6 +237,18 @@ export class ReachController {
     // new messages so neighbours can continue adjusting on later ticks.
     if (safeMotion(this.arm.base, before, proposed, p.segmentLength, obstacles))
       this.arm.angles = proposed;
-    else this.blocked = true;
+    else if (this.hazard.state !== 'Reaching' || this.withdrawalGoal !== null) {
+      // A blocked proximal turn must not freeze safe distal escape. Relax the
+      // existing requests tip first, checking the full sweep from the original pose each time.
+      // Each joint still uses its original bounded turn; no route is planned.
+      let accepted = [...before];
+      for (let i = accepted.length - 1; i >= 0; i--) {
+        const trial = [...accepted];
+        trial[i] = proposed[i];
+        if (safeMotion(this.arm.base, before, trial, p.segmentLength, obstacles)) accepted = trial;
+      }
+      this.arm.angles = accepted;
+      this.blocked = accepted.every((angle, i) => angle === before[i]);
+    } else this.blocked = true;
   }
 }

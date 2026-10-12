@@ -20,6 +20,7 @@ export class Simulation {
    */
   constructor(scenario = null) {
     this.scenario = scenario;
+    this.playbackSpeed = 1;
     this.restart();
   }
   /**
@@ -64,7 +65,8 @@ export class Simulation {
   advance(seconds) {
     validateDuration(seconds);
     if (this.paused) return;
-    this.accumulator += Math.min(seconds, MAXIMUM_FRAME_TIME);
+    // More unchanged ticks preserve dwell times, collision checks and event order.
+    this.accumulator += Math.min(seconds, MAXIMUM_FRAME_TIME) * this.playbackSpeed;
     while (this.accumulator >= SIMULATION_STEP) {
       this.central.step(SIMULATION_STEP, this.environment);
       this.accumulator -= SIMULATION_STEP;

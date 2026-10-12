@@ -592,3 +592,7 @@ kbd {
     min-height: 44px;
   }
 }
+
+.legend .hazard {
+  background: #f064a0;
+}

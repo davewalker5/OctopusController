@@ -14,6 +14,7 @@ from octopus_controller.avoidance import (
     steer_around_obstacles,
 )
 from octopus_controller.geometry import Point, pose_points, validate_point
+from octopus_controller.hazards import HazardResponse
 from octopus_controller.segment_control import SegmentRequest, request_start, turn_segment
 from octopus_controller.sensing import ObjectKind, WorldObject, detect_contacts
 
@@ -106,6 +107,8 @@ class ReachController:
         """
         self.avoiding = False
         self.blocked = False
+        self.hazard = HazardResponse()
+        self.withdrawal_goal: Point | None = None
         self.arm = arm
         positions = arm.points
         heading = 0.0
@@ -139,6 +142,8 @@ class ReachController:
         """Describe progress without claiming all in-range targets are reachable."""
         if self.blocked:
             return "Blocked"
+        if self.hazard.state != "Reaching":
+            return self.hazard.state
         if self.avoiding:
             return "Avoiding"
         if self.distance <= REACH_TOLERANCE:
@@ -163,22 +168,32 @@ class ReachController:
             raise ValueError("Elapsed seconds must be finite and non-negative")
         if elapsed_seconds == 0:
             return
+        self.hazard.sense(self.arm.points, objects, elapsed_seconds)
+        # The arm chooses its retreat point locally; preserve the central target.
+        movement_goal = self.withdrawal_goal or self.target
         obstacles = tuple(obj for obj in objects if obj.kind is ObjectKind.OBSTACLE)
         self.blocked = False
         self.avoiding = False
 
         # No route can put the tip inside a solid obstacle. Keep the assignment
         # intact so moving the obstacle or target lets the arm resume naturally.
-        if any(
-            hypot(self.target[0] - obj.centre[0], self.target[1] - obj.centre[1])
+        if self.hazard.state == "Reaching" and any(
+            hypot(movement_goal[0] - obj.centre[0], movement_goal[1] - obj.centre[1])
             < obj.radius + ARM_CLEARANCE
             for obj in obstacles
         ):
             self.blocked = True
             return
-        if self.distance <= REACH_TOLERANCE and not any(
-            contact.kind is ObjectKind.OBSTACLE
-            for contact in detect_contacts(self.arm.points, obstacles)
+        if (
+            self.hazard.state == "Reaching"
+            and hypot(
+                self.arm.points[-1][0] - movement_goal[0], self.arm.points[-1][1] - movement_goal[1]
+            )
+            <= REACH_TOLERANCE
+            and not any(
+                contact.kind is ObjectKind.OBSTACLE
+                for contact in detect_contacts(self.arm.points, obstacles)
+            )
         ):
             return
 
@@ -188,7 +203,7 @@ class ReachController:
         # Read the previous messages before writing any new ones. Otherwise a
         # single loop could pass the target through every segment in one update,
         # hiding the gradual neighbour-to-neighbour communication we want to study.
-        end_goals = [request.start for request in self._requests[1:]] + [self.target]
+        end_goals = [request.start for request in self._requests[1:]] + [movement_goal]
 
         # Redirect only requests whose next few segment lengths meet an obstacle.
         # The target remains unchanged; the altered requests travel through the
@@ -198,6 +213,11 @@ class ReachController:
                 positions[index], goal, parameters.segment_length, obstacles
             )
             self.avoiding |= changed
+
+        end_goals = [
+            self.hazard.steer(i, positions[i], positions[i + 1], goal, parameters.segment_length)
+            for i, goal in enumerate(end_goals)
+        ]
 
         next_requests = []
         heading = 0.0
@@ -253,12 +273,27 @@ class ReachController:
             )
 
         # This geometric guard checks the full swept movement, but never chooses
-        # a route. If any segment would cross an obstacle, hold the visible pose.
+        # a route. Reject the combined proposal if any segment would cross a solid.
         # Keep the new requests: neighbours can continue changing their requests
         # on later ticks and may find a turn that the constraints will allow.
         if safe_motion(
             self.arm.base, previous_angles, proposed_angles, parameters.segment_length, obstacles
         ):
             self.arm.angles = proposed_angles
+        elif self.hazard.state != "Reaching" or self.withdrawal_goal is not None:
+            # A proximal collision must not freeze safe distal escape motions.
+            # Try the already-requested turns separately, tip first, checking the
+            # entire sweep from the original pose for every trial. Local requests
+            # stay unchanged; lengths, bend limits and turn budgets are retained.
+            accepted = previous_angles.copy()
+            for index in reversed(range(len(accepted))):
+                trial = accepted.copy()
+                trial[index] = proposed_angles[index]
+                if safe_motion(
+                    self.arm.base, previous_angles, trial, parameters.segment_length, obstacles
+                ):
+                    accepted = trial
+            self.arm.angles = accepted
+            self.blocked = accepted == previous_angles
         else:
             self.blocked = True

@@ -29,7 +29,7 @@ def grasp_candidate(contacts: tuple[Contact, ...], unavailable: set[int]) -> tup
         if contact.kind is ObjectKind.FOOD and contact.object_id not in unavailable:
             by_object.setdefault(contact.object_id, set()).add(contact.segment_index)
     # Stable identity order makes simultaneous opportunities deterministic. This
-    # is a tie-break only; richer competition between goals has not been implemented
+    # is a local tie-break after task filtering and central resource arbitration.
     for identifier, segments in sorted(by_object.items()):
         run = 0
         previous = -2

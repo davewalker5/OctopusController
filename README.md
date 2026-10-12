@@ -26,13 +26,16 @@ The objective is not to reproduce the octopus nervous system in complete biologi
 
 ### What the simulation demonstrates
 
-The project currently explores five progressively more sophisticated capabilities:
+The project currently explores eight progressively more sophisticated capabilities:
 
 1. **Single-arm control** — controlling the movement and curvature of an individual flexible arm towards a target
 2. **Multi-arm control** — extending the control system to eight arms capable of operating simultaneously
 3. **Local sensing** — allowing individual arms to respond to objects detected in their immediate environment
 4. **Obstacle avoidance** — modifying arm movements in response to obstacles encountered while reaching towards a target
 5. **Grasping** — demonstrating object interaction through the coordinated positioning and curling of an arm
+6. **Local Hazards and Recoil** - detection of hazards by the arms with recoil interrupting local reaching
+7. **Escalation** - priority signalling of hazards with escalation to the central controller
+8. **Conflict resolution** — explicit priorities for safety, grip, shared targets and incidental discoveries
 
 Together, these demonstrations illustrate a progression from simple movement control towards more complex, environmentally responsive behaviour.
 

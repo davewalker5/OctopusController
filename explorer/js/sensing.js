@@ -20,7 +20,7 @@
 
 import { closestPoint, distance, validatePoint } from './geometry.js';
 /** Object categories understood by the local sensors; values also label the interface. */
-export const ObjectKind = Object.freeze({ FOOD: 'Food', OBSTACLE: 'Obstacle' });
+export const ObjectKind = Object.freeze({ FOOD: 'Food', OBSTACLE: 'Obstacle', HAZARD: 'Hazard' });
 /**
  * Create a validated, immutable circular scene object.
  * @param {number} identifier Positive integer identity, stable across object moves.
@@ -30,12 +30,23 @@ export const ObjectKind = Object.freeze({ FOOD: 'Food', OBSTACLE: 'Obstacle' });
  * @returns {WorldObject} Frozen record with a separately copied, frozen centre.
  * @throws {Error} If identity, coordinates, radius or category are invalid.
  */
-export function worldObject(identifier, centre, kind, radius = 14) {
+export function worldObject(
+  identifier,
+  centre,
+  kind,
+  radius = 14,
+  severity = 0.5,
+  detectionRange = 24,
+) {
   validatePoint(centre);
   if (!Number.isInteger(identifier) || identifier < 1) throw new Error('Invalid object identity');
   if (!Number.isFinite(radius) || radius <= 0)
     throw new Error('Object radius must be finite and positive');
   if (!Object.values(ObjectKind).includes(kind)) throw new Error('Invalid object kind');
+  if (!Number.isFinite(severity) || severity <= 0 || severity > 1)
+    throw new Error('Hazard severity must be in (0, 1]');
+  if (!Number.isFinite(detectionRange) || detectionRange < 0)
+    throw new Error('Hazard detection range must be finite and non-negative');
   // Copy and freeze the coordinates too: freezing only the record would still
   // allow a caller's array to move the object while an old snapshot is in use.
   return Object.freeze({
@@ -43,6 +54,8 @@ export function worldObject(identifier, centre, kind, radius = 14) {
     centre: Object.freeze([...centre]),
     kind,
     radius,
+    severity,
+    detectionRange,
   });
 }
 /**
@@ -104,8 +117,8 @@ export class Environment {
    * @returns {number} Newly allocated, stable scene identity.
    * @throws {Error} If the geometry or category is invalid.
    */
-  add(centre, kind, radius = 14) {
-    const obj = worldObject(this.nextIdentifier, centre, kind, radius);
+  add(centre, kind, radius = 14, severity = 0.5, detectionRange = 24) {
+    const obj = worldObject(this.nextIdentifier, centre, kind, radius, severity, detectionRange);
     this.entries.set(obj.identifier, obj);
     this.nextIdentifier++;
     return obj.identifier;
@@ -120,7 +133,10 @@ export class Environment {
   move(identifier, centre) {
     const obj = this.entries.get(identifier);
     if (!obj) throw new Error('Object no longer exists');
-    this.entries.set(identifier, worldObject(identifier, centre, obj.kind, obj.radius));
+    this.entries.set(
+      identifier,
+      worldObject(identifier, centre, obj.kind, obj.radius, obj.severity, obj.detectionRange),
+    );
   }
   /**
    * Delete an object; a subsequent sensing refresh clears its contacts.

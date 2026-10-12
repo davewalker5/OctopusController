@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "name": "Local hazard and recoil",
+  "body": [
+    280,
+    350
+  ],
+  "defaults": {
+    "segment_length": 18
+  },
+  "food": [
+    {
+      "id": "goal",
+      "position": [
+        462,
+        350
+      ],
+      "radius": 8
+    }
+  ],
+  "arms": [
+    {
+      "number": 3,
+      "target": {
+        "food": "goal"
+      }
+    }
+  ],
+  "hazards": [
+    {
+      "position": [
+        402,
+        450
+      ],
+      "radius": 14,
+      "severity": 0.5,
+      "detection_range": 24
+    }
+  ]
+}

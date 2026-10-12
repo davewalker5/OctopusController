@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "Obstacle comparison",
+  "body": [
+    280,
+    350
+  ],
+  "defaults": {
+    "segment_length": 18
+  },
+  "food": [
+    {
+      "id": "goal",
+      "position": [
+        462,
+        350
+      ],
+      "radius": 8
+    }
+  ],
+  "arms": [
+    {
+      "number": 3,
+      "target": {
+        "food": "goal"
+      }
+    }
+  ],
+  "obstacles": [
+    {
+      "position": [
+        402,
+        450
+      ],
+      "radius": 14
+    }
+  ]
+}

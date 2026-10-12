@@ -336,6 +336,109 @@ try {
     path: `${output}/${engine}-touch.png`,
     fullPage: true,
   });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator('#scenario').selectOption('local-hazard');
+  await page.waitForFunction(
+    () => document.querySelector('#world-title').textContent === 'Local hazard and recoil',
+  );
+  await page.locator('#arm-2').click();
+  await page.evaluate(async () => {
+    const { simulation } = await import('./js/app.js');
+    for (let i = 0; i < 70; i++) simulation.singleStep();
+  });
+  await settled(page);
+  assert.equal(await page.locator('#arm-state').textContent(), 'Recoiling');
+  await page.screenshot({ path: `${output}/${engine}-hazard.png`, fullPage: true });
+  await page.locator('#object-x').fill('650');
+  await page.locator('#object-y').fill('600');
+  await page.locator('button[value="Hazard"]').click();
+  assert.equal(
+    await page.evaluate(async () => {
+      const { simulation } = await import('./js/app.js');
+      return simulation.environment.objects.at(-1).kind;
+    }),
+    'Hazard',
+  );
+  await page.locator('#scenario').selectOption('hazard-escalation');
+  await page.waitForFunction(
+    () => document.querySelector('#world-title').textContent === 'High-priority hazard',
+  );
+  await page.locator('#arm-2').click();
+  await page.evaluate(async () => {
+    const { simulation } = await import('./js/app.js');
+    for (let i = 0; i < 70; i++) simulation.singleStep();
+  });
+  await settled(page);
+  assert.equal(await page.locator('#arm-state').textContent(), 'Withdrawing');
+  assert.match(await page.locator('#central-goal').textContent(), /Withdraw affected arms/);
+  assert.match(await page.locator('#priority-log').textContent(), /P100/);
+  await page.screenshot({ path: `${output}/${engine}-escalation.png`, fullPage: true });
+  await page.locator('#restart').click();
+  assert.equal(await page.locator('#priority-log').textContent(), '');
+  assert.match(await page.locator('#priority-counts').textContent(), /^0 reports/);
+  // Phase 3 outcomes must be observable through the shipped controls/readouts.
+  for (const [preset, title, armIndex, ticks, action] of [
+    ['competing-arms', 'Competing arms', 3, 30, 'Yield'],
+    ['food-vs-danger', 'Food versus danger', 0, 50, 'Withdraw'],
+    ['discovery-vs-task', 'Discovery versus assigned task', 2, 1, 'Reach'],
+  ]) {
+    await page.locator('#scenario').selectOption(preset);
+    await page.waitForFunction(
+      (t) => document.querySelector('#world-title').textContent === t,
+      title,
+    );
+    await page.locator(`#arm-${armIndex}`).click();
+    await page.evaluate(async (ticks) => {
+      const { simulation } = await import('./js/app.js');
+      for (let i = 0; i < ticks; i++) simulation.singleStep();
+    }, ticks);
+    await settled(page);
+    assert.match(await page.locator('#arm-decision').textContent(), new RegExp(action));
+    assert.notEqual(await page.locator('#conflict-log').textContent(), '');
+    if (preset === 'food-vs-danger') {
+      assert.match(await page.locator('#central-goal').textContent(), /Withdraw all arms/);
+      assert.match(await page.locator('#conflict-counts').textContent(), /1 safety releases/);
+      assert.match(await page.locator('#conflict-log').textContent(), /release food/);
+    }
+    if (preset === 'discovery-vs-task')
+      assert.match(await page.locator('#arm-decision').textContent(), /incidental discovery 20/);
+    await page.screenshot({ path: `${output}/${engine}-${preset}.png`, fullPage: true });
+    const frozen = await snapshot(page);
+    await settled(page);
+    assert.equal(await snapshot(page), frozen);
+    await page.locator('#restart').click();
+    assert.equal(await page.locator('#conflict-log').textContent(), '');
+  }
+  await page.locator('#scenario').selectOption('reef-forage-extended');
+  await page.waitForFunction(
+    () =>
+      document.querySelector('#world-title').textContent ===
+      'Extended reef forage — hazards and competing goals',
+  );
+  await page.locator('#playback-speed').selectOption('8');
+  await page.locator('#restart').click();
+  assert.equal(
+    await page.evaluate(async () => {
+      const { simulation } = await import('./js/app.js');
+      return simulation.playbackSpeed;
+    }),
+    8,
+  );
+  await page.locator('#arm-2').click();
+  const recovery = await page.evaluate(async () => {
+    const { simulation } = await import('./js/app.js');
+    for (let i = 0; i < 1200; i++) simulation.singleStep();
+    const arm = simulation.central.arm(2),
+      tip = arm.controller.arm.points.at(-1);
+    return {
+      distance: Math.hypot(tip[0] - 556, tip[1] - 454),
+      exposure: arm.controller.hazard.exposureSeconds,
+    };
+  });
+  assert.ok(recovery.distance > 12);
+  assert.ok(recovery.exposure < 2);
+  await settled(page);
+  await page.screenshot({ path: `${output}/${engine}-reef-recovery.png`, fullPage: true });
   assert.deepEqual(failures, []);
   const report = {
     engine,

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "Discovery versus assigned task",
+  "body": [
+    280,
+    350
+  ],
+  "defaults": {
+    "segment_length": 18,
+    "segment_count": 2
+  },
+  "food": [
+    {
+      "id": "incidental",
+      "position": [
+        383.54735163438943,
+        356.4567041694954
+      ],
+      "radius": 8
+    },
+    {
+      "id": "goal",
+      "position": [
+        462,
+        350
+      ],
+      "radius": 8
+    }
+  ],
+  "arms": [
+    {
+      "number": 3,
+      "target": {
+        "food": "goal"
+      },
+      "parameters": {
+        "segment_count": 20
+      }
+    }
+  ],
+  "escalation": {
+    "report_severity": 0.4,
+    "withdrawal_severity": 0.75,
+    "exposure_seconds": 2,
+    "clear_seconds": 0.6
+  }
+}

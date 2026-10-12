@@ -1,0 +1,18 @@
+{
+  "name": "octopus-controller-explorer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/web/*.test.js",
+    "test:browser": "node tests/web/browser-check.mjs",
+    "format:check": "prettier --check \"explorer/**/*.{js,css,html}\" \"tests/web/*.{js,mjs}\" package.json .prettierrc.json",
+    "format": "prettier --write \"explorer/**/*.{js,css,html}\" \"tests/web/*.{js,mjs}\" package.json .prettierrc.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "prettier": "3.6.2"
+  }
+}

@@ -20,13 +20,14 @@ Any static HTTP server works; Python is only a convenient preview server. Openin
 
 ## Using the explorer
 
-- **Starting conditions:** select the original demonstration, behaviour showcase or two-target example, or load a local version 1 JSON scenario. Files are read locally and are never uploaded. Loaded scenarios start paused. The original demonstration starts running on first visit unless reduced motion is requested.
+- **Starting conditions:** select a bundled demonstration, including competing arms, food versus danger and discovery versus assigned task, or load a local version 1 JSON scenario. Files are read locally and are never uploaded. Loaded scenarios start paused. The original demonstration starts running on first visit unless reduced motion is requested.
 - **Playback:** Play/Pause suspends or resumes the simulation. Step advances exactly 1/120 second while paused. Restart restores the selected starting conditions, clears time and capture history, selects Arm 1 and pauses.
 - **Arm selection:** use the numbered arm cards or dropdown. Each arm has its own geometry, destination and state. A highlighted arm does not receive priority in the simulation.
 - **Destinations:** use the destination canvas tool or enter X/Y coordinates and choose Assign. When an arm holds food, the destination applies to the food; otherwise it applies to the tip.
 - **Arm actions:** Idle holds the pose and any grip. Reset pose rebuilds only the selected arm and releases food. Retract carries held food towards its attachment. Release leaves food in place and idles the arm.
 - **Parameters:** change segment count, length, relative bend or turning speed, then Apply. Geometry edits reset the selected arm and release food; speed-only changes retain the pose and grip. Bend and speed are displayed in degrees and degrees per second.
 - **Scene editing:** select a canvas tool for one-click food/obstacle placement or object selection and dragging. The object list and coordinate fields offer keyboard alternatives. Moving or deleting held food releases it. Scene edits while paused refresh contacts without advancing time.
+- **Conflict resolution:** inspect the selected action, numeric priority and reason, plus recent outcomes, safety releases and abandoned carries. Critical reported threats withdraw every arm; ordinary threats affect the reporting arms. A yielding arm keeps its assignment.
 - **Capture log:** shows the last five captures. The model retains the last 32 reports and a cumulative count.
 
 Interactive parameter edits are clamped to the Python interface ranges: 2–40 segments, lengths 6–30 pixels, bends 5–180 degrees and speeds 0.25–4 radians/second (about 14.32–229.18 degrees/second). Scenario files may supply wider valid ranges, including up to 100 segments. Those values remain unchanged unless that particular field is edited. Applying an unchanged form does not reset geometry or round the underlying parameters.
@@ -54,9 +55,9 @@ Tab retains normal navigation. All actions also have labelled controls. Hidden t
 
 ## Scenarios and validation
 
-See the scenario specification. Both bundled files are copied unchanged from the repository's `scenarios/` directory; tests detect drift.
+See the scenario specification. All bundled files are copied unchanged from the repository's `scenarios/` directory; tests detect drift.
 
-The strict loader retains duplicate keys and numeric notation during parsing, so rules such as rejecting `"version": 1.0` and `"segment_count": 20.0` agree with Python. Validation is completed before replacing the scene. Malformed UTF-8 files are rejected rather than silently repaired. Errors preserve the current experiment. Food references resolve to the initial food position, not a moving target.
+The strict loader retains duplicate keys and numeric notation during parsing, so rules such as rejecting `"version": 1.0` and `"segment_count": 20.0` agree with Python. Validation is completed before replacing the scene. Malformed UTF-8 files are rejected rather than silently repaired. Errors preserve the current experiment. Food references retain both the initial destination and the named food identity. Incidental food cannot replace that task. See the [Phase 3 rules and scenario fields](../README.md#conflict-resolution).
 
 Restart rebuilds the validated conditions held in memory. To load edits made on disk, choose the file again. The last loaded local file remains available in the scenario selector for the current page session. No saved-session or export format is introduced.
 
@@ -70,6 +71,9 @@ Restart rebuilds the validated conditions held in memory. To load edits made on 
 | `sensing.js`         | Immutable scene snapshots, object identities and contacts      |
 | `avoidance.js`       | Local steering and conservative swept arm checks               |
 | `grasping.js`        | Adjacent contact qualification and payload attachment/sweep    |
+| `conflicts.js`       | Fixed-priority arbitration, resource reservations and outcome history |
+| `escalation.js`      | Arm reports, critical upgrades and central reported knowledge |
+| `hazards.js`         | Arm-local aversion, recoil and recovery |
 | `organism.js`        | Arm lifecycle, ownership and stable central scheduling         |
 | `scenario.js`        | Strict JSON parsing, validation and fresh scene construction   |
 | `simulation.js`      | Fixed-step playback, pause and restart                         |
@@ -99,7 +103,7 @@ The Node tests invoke `venv/bin/python` by default to produce fresh reference tr
 PYTHON=/path/to/python npm test
 ```
 
-Parity checks compare joint angles, positions, neighbour messages, targets, contacts, states, ownership, capture reports and object positions with a 1e-7 absolute tolerance for continuous values and exact equality for discrete values. They exercise both supplied scenarios, contested food ownership, carrying, obstacle insertion/removal, retraction and external object edits. Strict scenario acceptance is compared against the Python loader. Separate tests cover collision boundaries, fixed-step timing, pause/restart and interrupted grasp dwell.
+Parity checks compare joint angles, positions, neighbour messages, targets, contacts, states, ownership, capture reports and object positions with a 1e-7 absolute tolerance for continuous values and exact equality for discrete values. They exercise all supplied scenarios, contested food ownership, carrying, obstacle insertion/removal, retraction and external object edits. Strict scenario acceptance is compared against the Python loader. Separate tests cover collision boundaries, fixed-step timing, pause/restart and interrupted grasp dwell.
 
 ### Browser verification
 
